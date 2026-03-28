@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="ItemData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/item_data.gd" id="1_item_data"]
+
+[resource]
+script = ExtResource("1_item_data")
+id = "demo_guard_charm"
+display_name = "Guard Charm"
+cost = 1
+physical_defense_bonus = 2
+magic_defense_bonus = 1
+description = "PREP item. Equip an allied unit with extra defense for the rest of the match."

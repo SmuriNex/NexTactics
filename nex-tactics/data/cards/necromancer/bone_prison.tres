@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="CardData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/card_data.gd" id="1_card_data"]
+
+[resource]
+script = ExtResource("1_card_data")
+id = "bone_prison"
+display_name = "Bone Prison"
+card_type = 2
+cost = 3
+support_effect_type = 6
+cell_target_enemy_zone = true
+stun_turns = 2
+mana_gain_multiplier = 0.0
+description = "Trap support. If an enemy starts on the marked cell, it is locked and gains no mana."

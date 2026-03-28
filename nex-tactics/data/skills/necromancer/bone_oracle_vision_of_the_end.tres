@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "bone_oracle_vision_of_the_end"
+display_name = "Visao do Fim"
+effect_type = 12
+mana_cost = 55
+cooldown = 0.0
+range = 2
+guaranteed_magic_crit_hits = 1
+description = "Encanta um aliado proximo. O proximo ataque magico dele tem 100% de critico."

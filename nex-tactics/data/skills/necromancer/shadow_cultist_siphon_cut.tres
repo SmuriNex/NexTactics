@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "shadow_cultist_siphon_cut"
+display_name = "Corte Sifao"
+effect_type = 3
+mana_cost = 55
+cooldown = 0.0
+range = 1
+physical_power_multiplier = 1.0
+magic_power_multiplier = 1.0
+duration_turns = 4
+mana_gain_multiplier = 0.5
+description = "Golpe hibrido que reduz a regeneracao de mana do alvo pela metade por 4 turnos."

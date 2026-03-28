@@ -1,0 +1,26 @@
+[gd_resource type="Resource" script_class="UnitData" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/unit_data.gd" id="1_unit_data"]
+[ext_resource type="Resource" path="res://data/skills/necromancer/bone_kamikaze_necrotic_blast.tres" id="2_skill_data"]
+
+[resource]
+script = ExtResource("1_unit_data")
+id = "bone_kamikaze"
+display_name = "Kamikaze de Ossos"
+race = 4
+class_type = 0
+cost = 1
+class_label = "Suicide Attacker"
+class_short_label = "BOOM"
+max_hp = 8
+physical_attack = 4
+magic_attack = 4
+physical_defense = 1
+magic_defense = 1
+attack_range = 1
+crit_chance = 0.05
+mana_max = 45
+mana_gain_on_attack = 18
+mana_gain_on_hit = 12
+skill_data = ExtResource("2_skill_data")
+description = "Atacante suicida barato que explode ao encher a mana ou quando cai em combate."

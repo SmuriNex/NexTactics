@@ -1,0 +1,27 @@
+[gd_scene format=3 uid="uid://dlydrnl24oexd"]
+
+[ext_resource type="Script" uid="uid://b1343iqnyw61k" path="res://scripts/battle/battle_manager.gd" id="1_battle_manager"]
+[ext_resource type="PackedScene" path="res://scenes/board/board_grid.tscn" id="2_board_grid"]
+[ext_resource type="PackedScene" uid="uid://de3iw8a3rdyf3" path="res://scenes/ui/battle_hud.tscn" id="3_battle_hud"]
+[ext_resource type="PackedScene" uid="uid://bme6matkg4bod" path="res://scenes/ui/deploy_bar.tscn" id="4_deploy_bar"]
+[ext_resource type="Script" uid="uid://d0k2bxge67loa" path="res://scripts/camera/board_camera_controller.gd" id="5_board_camera"]
+[ext_resource type="PackedScene" path="res://scenes/presentation/board_presentation_3d.tscn" id="6_board_presentation"]
+
+[node name="BattleScene" type="Node" unique_id=1798486907]
+script = ExtResource("1_battle_manager")
+
+[node name="BoardPresentation3D" parent="." unique_id=27758623 instance=ExtResource("6_board_presentation")]
+
+[node name="BoardGrid" parent="." unique_id=453756815 instance=ExtResource("2_board_grid")]
+position = Vector2(170, 14)
+
+[node name="BoardCameraController" type="Camera2D" parent="." unique_id=762003641]
+position = Vector2(394, 206)
+zoom = Vector2(0.88, 0.88)
+script = ExtResource("5_board_camera")
+board_path = NodePath("../BoardGrid")
+board_presentation_3d_path = NodePath("../BoardPresentation3D")
+
+[node name="BattleHUD" parent="." unique_id=1972175537 instance=ExtResource("3_battle_hud")]
+
+[node name="DeployBar" parent="." unique_id=557652996 instance=ExtResource("4_deploy_bar")]

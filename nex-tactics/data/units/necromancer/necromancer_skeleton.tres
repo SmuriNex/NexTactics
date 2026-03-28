@@ -1,0 +1,24 @@
+[gd_resource type="Resource" script_class="UnitData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/unit_data.gd" id="1_unit_data"]
+
+[resource]
+script = ExtResource("1_unit_data")
+id = "necromancer_skeleton"
+display_name = "Esqueleto"
+race = 4
+class_type = 0
+class_label = "Lacaio Invocado"
+class_short_label = "TOK"
+cost = 0
+max_hp = 4
+physical_attack = 1
+magic_attack = 1
+physical_defense = 0
+magic_defense = 0
+attack_range = 1
+crit_chance = 0.0
+mana_max = 1
+mana_gain_on_attack = 0
+mana_gain_on_hit = 0
+description = "Lacaio temporario criado por Despertar da Tumba."

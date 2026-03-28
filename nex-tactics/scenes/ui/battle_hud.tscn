@@ -1,0 +1,292 @@
+[gd_scene format=3 uid="uid://de3iw8a3rdyf3"]
+
+[ext_resource type="Script" uid="uid://bsmchwh4r7f8j" path="res://scripts/ui/battle_hud.gd" id="1_battle_hud"]
+
+[node name="BattleHUD" type="CanvasLayer" unique_id=910400953]
+script = ExtResource("1_battle_hud")
+
+[node name="PanelContainer" type="PanelContainer" parent="." unique_id=1625873771]
+offset_right = 316.0
+offset_bottom = 224.0
+
+[node name="MarginContainer" type="MarginContainer" parent="PanelContainer" unique_id=2123256678]
+layout_mode = 2
+
+[node name="VBoxContainer" type="VBoxContainer" parent="PanelContainer/MarginContainer" unique_id=136793541]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="RoundLabel" type="Label" parent="PanelContainer/MarginContainer/VBoxContainer" unique_id=586838215]
+layout_mode = 2
+theme_override_font_sizes/font_size = 17
+text = "RODADA -"
+
+[node name="PlayerLifeLabel" type="Label" parent="PanelContainer/MarginContainer/VBoxContainer" unique_id=406611134]
+layout_mode = 2
+theme_override_font_sizes/font_size = 14
+text = "Vida jog.    -"
+
+[node name="EnemyLifeLabel" type="Label" parent="PanelContainer/MarginContainer/VBoxContainer" unique_id=68328619]
+layout_mode = 2
+theme_override_font_sizes/font_size = 14
+text = "Vida inim.   -"
+
+[node name="EnergyLabel" type="Label" parent="PanelContainer/MarginContainer/VBoxContainer" unique_id=595608565]
+layout_mode = 2
+theme_override_font_sizes/font_size = 14
+text = "Energia      -"
+
+[node name="StateLabel" type="Label" parent="PanelContainer/MarginContainer/VBoxContainer" unique_id=392846563]
+layout_mode = 2
+theme_override_font_sizes/font_size = 14
+text = "Estado       -"
+
+[node name="SelectedDeployLabel" type="Label" parent="PanelContainer/MarginContainer/VBoxContainer" unique_id=574517315]
+layout_mode = 2
+theme_override_font_sizes/font_size = 13
+text = "Selecao: nenhuma"
+autowrap_mode = 3
+
+[node name="SynergyLabel" type="Label" parent="PanelContainer/MarginContainer/VBoxContainer" unique_id=695551703]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Racas campo  Nenhuma"
+autowrap_mode = 3
+
+[node name="RoundResultLabel" type="Label" parent="PanelContainer/MarginContainer/VBoxContainer" unique_id=1117736698]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Ultima rodada   -"
+autowrap_mode = 3
+
+[node name="InfoPanelContainer" type="PanelContainer" parent="." unique_id=1956862205]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -392.0
+offset_top = -2.0
+offset_bottom = 450.0
+grow_horizontal = 0
+
+[node name="MarginContainer" type="MarginContainer" parent="InfoPanelContainer" unique_id=870662758]
+layout_mode = 2
+theme_override_constants/margin_left = 10
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 10
+theme_override_constants/margin_bottom = 10
+
+[node name="InfoScroll" type="ScrollContainer" parent="InfoPanelContainer/MarginContainer" unique_id=382970415]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="VBoxContainer" type="VBoxContainer" parent="InfoPanelContainer/MarginContainer/InfoScroll" unique_id=1932202626]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="HeaderPanel" type="PanelContainer" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer" unique_id=1734961090]
+layout_mode = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/HeaderPanel" unique_id=115088591]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 8
+
+[node name="VBoxContainer" type="VBoxContainer" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/HeaderPanel/MarginContainer" unique_id=74279936]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="HeaderRow" type="HBoxContainer" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/HeaderPanel/MarginContainer/VBoxContainer" unique_id=966705996]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="UnitInfoTitleLabel" type="Label" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/HeaderPanel/MarginContainer/VBoxContainer/HeaderRow" unique_id=1182306782]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 16
+text = "Info da unidade"
+autowrap_mode = 3
+
+[node name="UnitInfoCostLabel" type="Label" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/HeaderPanel/MarginContainer/VBoxContainer/HeaderRow" unique_id=179806610]
+layout_mode = 2
+theme_override_font_sizes/font_size = 15
+text = "Custo -"
+horizontal_alignment = 2
+
+[node name="UnitInfoSubtitleLabel" type="Label" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/HeaderPanel/MarginContainer/VBoxContainer" unique_id=1034097377]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Clique com o botao direito em uma unidade ou suporte."
+autowrap_mode = 3
+
+[node name="PrimarySectionPanel" type="PanelContainer" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer" unique_id=1912701891]
+layout_mode = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/PrimarySectionPanel" unique_id=115975996]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 8
+
+[node name="VBoxContainer" type="VBoxContainer" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/PrimarySectionPanel/MarginContainer" unique_id=1821359342]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="PrimarySectionTitleLabel" type="Label" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/PrimarySectionPanel/MarginContainer/VBoxContainer" unique_id=1643169377]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "VIDA E MANA"
+
+[node name="PrimaryBlockLabel" type="Label" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/PrimarySectionPanel/MarginContainer/VBoxContainer" unique_id=782524686]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "-"
+autowrap_mode = 3
+
+[node name="StatsSectionPanel" type="PanelContainer" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer" unique_id=1082795099]
+layout_mode = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/StatsSectionPanel" unique_id=1422251890]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 8
+
+[node name="VBoxContainer" type="VBoxContainer" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/StatsSectionPanel/MarginContainer" unique_id=2057748319]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="StatsSectionTitleLabel" type="Label" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/StatsSectionPanel/MarginContainer/VBoxContainer" unique_id=1853050202]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "ATRIBUTOS"
+
+[node name="StatsBlockLabel" type="Label" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/StatsSectionPanel/MarginContainer/VBoxContainer" unique_id=817167418]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "-"
+autowrap_mode = 3
+
+[node name="SkillSectionPanel" type="PanelContainer" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer" unique_id=138465037]
+layout_mode = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/SkillSectionPanel" unique_id=1847961422]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 8
+
+[node name="VBoxContainer" type="VBoxContainer" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/SkillSectionPanel/MarginContainer" unique_id=1187704019]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="SkillSectionTitleLabel" type="Label" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/SkillSectionPanel/MarginContainer/VBoxContainer" unique_id=1044741111]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "PASSIVAS E HABILIDADE"
+
+[node name="SkillBlockLabel" type="Label" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/SkillSectionPanel/MarginContainer/VBoxContainer" unique_id=1130957850]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "-"
+autowrap_mode = 3
+
+[node name="TagsSectionPanel" type="PanelContainer" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer" unique_id=1224927033]
+layout_mode = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/TagsSectionPanel" unique_id=2000335307]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 8
+
+[node name="VBoxContainer" type="VBoxContainer" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/TagsSectionPanel/MarginContainer" unique_id=1502801429]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="TagsSectionTitleLabel" type="Label" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/TagsSectionPanel/MarginContainer/VBoxContainer" unique_id=382837852]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "PERFIL E TAGS"
+
+[node name="TagsBlockLabel" type="Label" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/TagsSectionPanel/MarginContainer/VBoxContainer" unique_id=944005582]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "-"
+autowrap_mode = 3
+
+[node name="ObservedBoardSectionPanel" type="PanelContainer" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer" unique_id=969006143]
+visible = false
+layout_mode = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/ObservedBoardSectionPanel" unique_id=1757958959]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 8
+
+[node name="VBoxContainer" type="VBoxContainer" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/ObservedBoardSectionPanel/MarginContainer" unique_id=1627081067]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="ObservedBoardSectionTitleLabel" type="Label" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/ObservedBoardSectionPanel/MarginContainer/VBoxContainer" unique_id=1299248984]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "TABULEIRO OBSERVADO"
+
+[node name="ObservedBoardMetaLabel" type="Label" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/ObservedBoardSectionPanel/MarginContainer/VBoxContainer" unique_id=890580304]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "-"
+autowrap_mode = 3
+
+[node name="ObservedBoardGrid" type="GridContainer" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/ObservedBoardSectionPanel/MarginContainer/VBoxContainer" unique_id=472170085]
+layout_mode = 2
+columns = 7
+theme_override_constants/h_separation = 4
+theme_override_constants/v_separation = 4
+
+[node name="ObservedBoardHintLabel" type="Label" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/ObservedBoardSectionPanel/MarginContainer/VBoxContainer" unique_id=1766155162]
+layout_mode = 2
+theme_override_font_sizes/font_size = 11
+text = "-"
+autowrap_mode = 3
+
+[node name="ObservedBoardBackButton" type="Button" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/ObservedBoardSectionPanel/MarginContainer/VBoxContainer" unique_id=930333084]
+layout_mode = 2
+text = "Voltar para meu tabuleiro"
+
+[node name="PlayerSidebarPanelContainer" type="PanelContainer" parent="." unique_id=2013149901]
+offset_left = 4.0
+offset_top = 232.0
+offset_right = 232.0
+offset_bottom = 474.0
+
+[node name="MarginContainer" type="MarginContainer" parent="PlayerSidebarPanelContainer" unique_id=328833471]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 8
+
+[node name="VBoxContainer" type="VBoxContainer" parent="PlayerSidebarPanelContainer/MarginContainer" unique_id=169063441]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="PlayersTitleLabel" type="Label" parent="PlayerSidebarPanelContainer/MarginContainer/VBoxContainer" unique_id=699125521]
+layout_mode = 2
+theme_override_font_sizes/font_size = 13
+text = "JOGADORES"
+
+[node name="PlayersListVBox" type="VBoxContainer" parent="PlayerSidebarPanelContainer/MarginContainer/VBoxContainer" unique_id=1085668821]
+layout_mode = 2
+theme_override_constants/separation = 4

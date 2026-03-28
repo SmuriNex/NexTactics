@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "mourning_fairy_grave_dust"
+display_name = "Pacto de Sangue"
+effect_type = 10
+mana_cost = 50
+cooldown = 0.0
+range = 2
+self_health_cost_ratio = 0.3
+ally_mana_grant_ratio = 0.5
+description = "Sacrifica 30% da propria vida para encher 50% da mana de um aliado, priorizando o Mestre."

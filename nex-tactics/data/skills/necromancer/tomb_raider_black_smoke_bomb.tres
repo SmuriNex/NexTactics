@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "tomb_raider_black_smoke_bomb"
+display_name = "Bomba de Fumaca Negra"
+effect_type = 2
+mana_cost = 60
+cooldown = 0.0
+range = 1
+damage_amount = 1
+physical_power_multiplier = 1.25
+area_radius = 1
+duration_turns = 4
+physical_defense_multiplier = 0.8
+description = "Causa dano fisico em area curta ao redor do alvo e reduz a defesa fisica dos atingidos em 20% por 4 turnos."

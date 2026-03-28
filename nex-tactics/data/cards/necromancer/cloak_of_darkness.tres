@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="CardData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/card_data.gd" id="1_card_data"]
+
+[resource]
+script = ExtResource("1_card_data")
+id = "cloak_of_darkness"
+display_name = "Cloak of Darkness"
+card_type = 2
+cost = 3
+support_effect_type = 3
+stealth_turns = 2
+description = "Equip support. The target starts the battle hidden in stealth."

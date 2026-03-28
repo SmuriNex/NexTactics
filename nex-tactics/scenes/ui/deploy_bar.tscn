@@ -1,0 +1,90 @@
+[gd_scene format=3 uid="uid://bme6matkg4bod"]
+
+[ext_resource type="Script" uid="uid://bj1dqntlh2q3i" path="res://scripts/ui/deploy_bar.gd" id="1_deploy_bar"]
+
+[node name="DeployBar" type="CanvasLayer" unique_id=1436389165]
+script = ExtResource("1_deploy_bar")
+
+[node name="DeckPanel" type="PanelContainer" parent="." unique_id=1877958824]
+anchors_preset = -1
+anchor_left = 0.00868056
+anchor_top = 1.0
+anchor_right = 0.6666667
+anchor_bottom = 1.0
+offset_left = 4.0
+offset_top = -176.0
+offset_right = -8.0
+offset_bottom = -8.0
+grow_vertical = 0
+metadata/_edit_use_anchors_ = true
+
+[node name="MarginContainer" type="MarginContainer" parent="DeckPanel" unique_id=469316077]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 6
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 6
+
+[node name="DeckScroll" type="ScrollContainer" parent="DeckPanel/MarginContainer" unique_id=1813604590]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="MainColumn" type="VBoxContainer" parent="DeckPanel/MarginContainer/DeckScroll" unique_id=202516031]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="SupportRow" type="VBoxContainer" parent="DeckPanel/MarginContainer/DeckScroll/MainColumn" unique_id=1601363157]
+layout_mode = 2
+theme_override_constants/separation = 2
+
+[node name="SupportTitleLabel" type="Label" parent="DeckPanel/MarginContainer/DeckScroll/MainColumn/SupportRow" unique_id=383288155]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "SUPORTES"
+
+[node name="SupportSlotsContainer" type="HBoxContainer" parent="DeckPanel/MarginContainer/DeckScroll/MainColumn/SupportRow" unique_id=1430454290]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="MainRow" type="VBoxContainer" parent="DeckPanel/MarginContainer/DeckScroll/MainColumn" unique_id=1330970886]
+layout_mode = 2
+theme_override_constants/separation = 2
+
+[node name="UnitTitleLabel" type="Label" parent="DeckPanel/MarginContainer/DeckScroll/MainColumn/MainRow" unique_id=1207956131]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "UNIDADES"
+
+[node name="UnitSlotsContainer" type="GridContainer" parent="DeckPanel/MarginContainer/DeckScroll/MainColumn/MainRow" unique_id=715866780]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/h_separation = 6
+theme_override_constants/v_separation = 6
+columns = 6
+
+[node name="SellZonePanel" type="PanelContainer" parent="." unique_id=1472521275]
+anchors_preset = -1
+anchor_left = 0.8385417
+anchor_top = 1.0
+anchor_right = 0.9887153
+anchor_bottom = 1.0
+offset_left = 4.0
+offset_top = -96.0
+offset_right = -4.0
+offset_bottom = -8.0
+grow_horizontal = 0
+grow_vertical = 0
+modulate = Color(0.25, 0.18, 0.18, 0.95)
+custom_minimum_size = Vector2(0, 88)
+metadata/_edit_use_anchors_ = true
+
+[node name="SellZoneLabel" type="Label" parent="SellZonePanel" unique_id=1866223728]
+layout_mode = 2
+text = "AREA DE VENDA\nArraste a unidade"
+horizontal_alignment = 1
+vertical_alignment = 1
+autowrap_mode = 2

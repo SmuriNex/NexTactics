@@ -1,0 +1,26 @@
+[gd_resource type="Resource" script_class="UnitData" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/unit_data.gd" id="1_unit_data"]
+[ext_resource type="Resource" path="res://data/skills/necromancer/fallen_knight_dark_fissure.tres" id="2_skill_data"]
+
+[resource]
+script = ExtResource("1_unit_data")
+id = "fallen_knight"
+display_name = "Cavaleiro Caido"
+race = 4
+class_type = 0
+class_label = "Dark Knight"
+class_short_label = "DK"
+cost = 3
+max_hp = 19
+physical_attack = 3
+magic_attack = 7
+physical_defense = 5
+magic_defense = 4
+attack_range = 1
+crit_chance = 0.03
+mana_max = 65
+mana_gain_on_attack = 12
+mana_gain_on_hit = 10
+skill_data = ExtResource("2_skill_data")
+description = "Atacante morto-vivo que abre uma fissura sombria na frente inimiga e desacelera a resposta do grupo atingido."

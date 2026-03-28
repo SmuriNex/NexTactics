@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "bone_kamikaze_necrotic_blast"
+display_name = "Explosao Necrotica"
+effect_type = 6
+mana_cost = 45
+cooldown = 0.0
+range = 1
+damage_amount = 2
+magic_power_multiplier = 1.25
+area_radius = 1
+description = "Quando a mana enche ou o HP chega a zero, explode causando dano magico em area."

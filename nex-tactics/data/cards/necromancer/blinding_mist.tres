@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="CardData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/card_data.gd" id="1_card_data"]
+
+[resource]
+script = ExtResource("1_card_data")
+id = "blinding_mist"
+display_name = "Blinding Mist"
+card_type = 2
+cost = 3
+support_effect_type = 4
+effect_duration_turns = 2
+delayed_trigger_min_turn = 3
+delayed_trigger_max_turn = 8
+physical_miss_chance = 0.5
+description = "Field spell. A delayed mist makes enemy physical attacks unreliable."

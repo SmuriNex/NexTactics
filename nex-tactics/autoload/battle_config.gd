@@ -1,0 +1,14 @@
+extends Node
+
+const BOARD_WIDTH := 7
+const BOARD_HEIGHT := 6
+const PLAYER_ROWS := 2
+const ENEMY_ROWS := 2
+
+const STARTING_ENERGY := 3
+const ENERGY_PER_ROUND := 2
+const GLOBAL_LIFE := 20
+const MAX_FIELD_UNITS := 8
+const LOBBY_PLAYER_COUNT := 8
+const PREP_DURATION_SECONDS := 30.0
+const REVEAL_TRANSITION_SECONDS := 0.28

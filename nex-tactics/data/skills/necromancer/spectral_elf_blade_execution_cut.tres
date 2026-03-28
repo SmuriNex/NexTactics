@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "spectral_elf_blade_execution_cut"
+display_name = "Corte da Execucao"
+effect_type = 7
+mana_cost = 60
+cooldown = 0.0
+range = 1
+damage_amount = 3
+physical_power_multiplier = 1.6
+magic_power_multiplier = 0.0
+description = "Golpe fisico devastador. Se o alvo estiver abaixo de 30% de PV, o golpe crita automaticamente."

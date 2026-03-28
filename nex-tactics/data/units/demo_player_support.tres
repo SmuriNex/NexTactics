@@ -1,0 +1,24 @@
+[gd_resource type="Resource" script_class="UnitData" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/unit_data.gd" id="1_unit_data"]
+[ext_resource type="Resource" path="res://data/skills/demo_support_heal_skill.tres" id="2_skill_data"]
+
+[resource]
+script = ExtResource("1_unit_data")
+id = "demo_player_support"
+display_name = "Player Support"
+race = 3
+class_type = 3
+cost = 1
+max_hp = 11
+physical_attack = 1
+magic_attack = 4
+physical_defense = 1
+magic_defense = 2
+attack_range = 2
+crit_chance = 0.04
+mana_max = 50
+mana_gain_on_attack = 16
+mana_gain_on_hit = 10
+skill_data = ExtResource("2_skill_data")
+description = "Fairy support that restores wounded allies once mana is full."

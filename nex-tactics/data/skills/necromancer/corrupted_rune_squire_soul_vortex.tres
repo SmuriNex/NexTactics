@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "corrupted_rune_squire_soul_vortex"
+display_name = "Vortice Herege"
+effect_type = 9
+mana_cost = 65
+cooldown = 0.0
+range = 1
+area_radius = 1
+duration_turns = 3
+mana_gain_multiplier = 0.0
+description = "Cria uma aura de silencio por 3 turnos. Inimigos proximos nao ganham regeneracao de mana."

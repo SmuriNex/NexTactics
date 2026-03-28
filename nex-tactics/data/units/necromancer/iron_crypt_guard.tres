@@ -1,0 +1,26 @@
+[gd_resource type="Resource" script_class="UnitData" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/unit_data.gd" id="1_unit_data"]
+[ext_resource type="Resource" path="res://data/skills/necromancer/iron_crypt_guard_bone_carapace.tres" id="2_skill_data"]
+
+[resource]
+script = ExtResource("1_unit_data")
+id = "iron_crypt_guard"
+display_name = "Abominacao de Carne"
+race = 4
+class_type = 1
+class_label = "Tank"
+class_short_label = "TNK"
+cost = 3
+max_hp = 26
+physical_attack = 3
+magic_attack = 0
+physical_defense = 8
+magic_defense = 4
+attack_range = 1
+crit_chance = 0.01
+mana_max = 70
+mana_gain_on_attack = 10
+mana_gain_on_hit = 12
+skill_data = ExtResource("2_skill_data")
+description = "Tanque morto-vivo de linha de frente que ergue um escudo fisico massivo e pune ataques corpo a corpo."

@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "iron_crypt_guard_bone_carapace"
+display_name = "Carapaca de Ossos"
+effect_type = 8
+mana_cost = 70
+cooldown = 0.0
+range = 1
+duration_turns = 5
+physical_shield_amount = 14
+reflect_damage = 2
+description = "Cria um escudo fisico massivo por 5 turnos. Inimigos que atacarem corpo a corpo recebem dano de reflexo."

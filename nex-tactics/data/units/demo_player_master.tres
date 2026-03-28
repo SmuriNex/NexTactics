@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="UnitData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/unit_data.gd" id="1_unit_data"]
+
+[resource]
+script = ExtResource("1_unit_data")
+id = "demo_player_master"
+display_name = "Player Master"
+race = 0
+class_type = 1
+cost = 0
+max_hp = 28
+physical_attack = 6
+magic_attack = 2
+physical_defense = 4
+magic_defense = 1
+attack_range = 2
+crit_chance = 0.08
+mana_max = 60
+mana_gain_on_attack = 20
+mana_gain_on_hit = 12
+description = "Master unit placeholder for player side."

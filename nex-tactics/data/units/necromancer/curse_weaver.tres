@@ -1,0 +1,26 @@
+[gd_resource type="Resource" script_class="UnitData" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/unit_data.gd" id="1_unit_data"]
+[ext_resource type="Resource" path="res://data/skills/necromancer/curse_weaver_thread_of_ruin.tres" id="2_skill_data"]
+
+[resource]
+script = ExtResource("1_unit_data")
+id = "curse_weaver"
+display_name = "Bruxa do Covil"
+race = 0
+class_type = 3
+cost = 2
+class_label = "Debuff Support"
+class_short_label = "DEB"
+max_hp = 12
+physical_attack = 2
+magic_attack = 5
+physical_defense = 2
+magic_defense = 5
+attack_range = 3
+crit_chance = 0.03
+mana_max = 55
+mana_gain_on_attack = 18
+mana_gain_on_hit = 8
+skill_data = ExtResource("2_skill_data")
+description = "Suporte de debuff humano que rompe a defesa magica do melhor alvo para abrir espaco para o restante do deck."

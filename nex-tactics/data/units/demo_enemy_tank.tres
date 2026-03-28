@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="UnitData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/unit_data.gd" id="1_unit_data"]
+
+[resource]
+script = ExtResource("1_unit_data")
+id = "demo_enemy_tank"
+display_name = "Enemy Tank"
+race = 4
+class_type = 1
+cost = 1
+max_hp = 18
+physical_attack = 4
+magic_attack = 0
+physical_defense = 3
+magic_defense = 0
+attack_range = 1
+crit_chance = 0.0
+mana_max = 80
+mana_gain_on_attack = 12
+mana_gain_on_hit = 8
+description = "Basic frontline placeholder for enemy tests."

@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "hungry_ghoul_siphon_bite"
+display_name = "Mordida Sifao"
+effect_type = 4
+mana_cost = 60
+cooldown = 0.0
+range = 1
+damage_amount = 2
+physical_power_multiplier = 1.45
+damage_heal_ratio = 0.5
+description = "Ataque fisico que cura o Carnical em 50% do dano causado."

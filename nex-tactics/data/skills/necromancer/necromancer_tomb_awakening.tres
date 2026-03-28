@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "necromancer_tomb_awakening"
+display_name = "Despertar da Tumba"
+effect_type = 1
+mana_cost = 70
+cooldown = 0.0
+range = 1
+summon_count = 2
+summon_unit_path = "res://data/units/necromancer/necromancer_skeleton.tres"
+summon_stat_ratio = 0.15
+description = "Ao encher a mana, invoca 2 esqueletos em celulas livres proximas. Cada esqueleto entra com 15% dos status do Rei Necromante."

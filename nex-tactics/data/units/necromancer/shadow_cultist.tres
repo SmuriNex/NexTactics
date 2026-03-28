@@ -1,0 +1,26 @@
+[gd_resource type="Resource" script_class="UnitData" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/unit_data.gd" id="1_unit_data"]
+[ext_resource type="Resource" path="res://data/skills/necromancer/shadow_cultist_siphon_cut.tres" id="2_skill_data"]
+
+[resource]
+script = ExtResource("1_unit_data")
+id = "shadow_cultist"
+display_name = "Sombra Rastejante"
+race = 4
+class_type = 4
+cost = 2
+class_label = "Disruptor"
+class_short_label = "DISR"
+max_hp = 11
+physical_attack = 4
+magic_attack = 5
+physical_defense = 2
+magic_defense = 4
+attack_range = 1
+crit_chance = 0.06
+mana_max = 55
+mana_gain_on_attack = 16
+mana_gain_on_hit = 8
+skill_data = ExtResource("2_skill_data")
+description = "Disruptor morto-vivo que fere o alvo e enfraquece sua regeneracao de mana por alguns turnos."

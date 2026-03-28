@@ -1,0 +1,26 @@
+[gd_resource type="Resource" script_class="UnitData" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/unit_data.gd" id="1_unit_data"]
+[ext_resource type="Resource" path="res://data/skills/necromancer/tomb_raider_black_smoke_bomb.tres" id="2_skill_data"]
+
+[resource]
+script = ExtResource("1_unit_data")
+id = "tomb_raider"
+display_name = "Saqueador de Tumulos"
+race = 0
+class_type = 4
+cost = 2
+class_label = "Disruptor"
+class_short_label = "DISR"
+max_hp = 12
+physical_attack = 7
+magic_attack = 1
+physical_defense = 3
+magic_defense = 2
+attack_range = 1
+crit_chance = 0.08
+mana_max = 60
+mana_gain_on_attack = 14
+mana_gain_on_hit = 8
+skill_data = ExtResource("2_skill_data")
+description = "Disruptor humano que entra perto da linha inimiga para abrir espaco e reduzir a defesa fisica em area."
