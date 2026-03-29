@@ -1,0 +1,26 @@
+[gd_resource type="Resource" script_class="UnitData" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/unit_data.gd" id="1_unit_data"]
+[ext_resource type="Resource" path="res://data/skills/thrax/alpha_werewolf_hunting_howl.tres" id="2_skill_data"]
+
+[resource]
+script = ExtResource("1_unit_data")
+id = "alpha_werewolf"
+display_name = "Lobisomem Alfa"
+race = 5
+class_type = 0
+class_label = "Bruiser"
+class_short_label = "BRU"
+cost = 4
+max_hp = 24
+physical_attack = 7
+magic_attack = 0
+physical_defense = 3
+magic_defense = 1
+attack_range = 1
+crit_chance = 0.07
+mana_max = 75
+mana_gain_on_attack = 11
+mana_gain_on_hit = 8
+skill_data = ExtResource("2_skill_data")
+description = "Predador bestial que abre espaco no front com ataques que espirram para os lados."

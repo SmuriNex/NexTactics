@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "thrax_war_chant"
+display_name = "Cancao de Guerra"
+effect_type = 26
+mana_cost = 80
+cooldown = 0.0
+range = 1
+area_radius = 2
+duration_turns = 2
+description = "Ao encher a mana, Thrax ruge e obriga os inimigos proximos a focarem seus ataques nele por um curto periodo."

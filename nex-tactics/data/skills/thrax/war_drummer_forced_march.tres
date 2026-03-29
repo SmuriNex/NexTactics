@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "war_drummer_forced_march"
+display_name = "Marcha Forcada"
+effect_type = 25
+mana_cost = 60
+cooldown = 0.0
+range = 1
+ally_mana_grant_ratio = 0.3
+description = "Aliados adjacentes recebem +30% de mana instantaneamente."

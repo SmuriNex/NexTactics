@@ -7,7 +7,6 @@ script = ExtResource("1_card_data")
 id = "demo_field_aid"
 display_name = "Field Aid"
 card_type = 2
-cost = 1
 support_effect_type = 0
 global_life_heal = 3
 description = "PREP support. Target your Master to recover 3 player life."

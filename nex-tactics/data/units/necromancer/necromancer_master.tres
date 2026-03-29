@@ -6,7 +6,7 @@
 [resource]
 script = ExtResource("1_unit_data")
 id = "necromancer_master"
-display_name = "Rei Necromante"
+display_name = "Mordos o necromante"
 race = 4
 class_type = 0
 class_label = "Mestre"
@@ -23,4 +23,4 @@ mana_max = 70
 mana_gain_on_attack = 18
 mana_gain_on_hit = 10
 master_skill_data = ExtResource("2_master_skill")
-description = "Mestre do deck que acelera a propria mana com mortes e domina a mesa invocando esqueletos."
+description = "Mestre morto-vivo que acelera a propria mana com mortes e domina a mesa invocando esqueletos."

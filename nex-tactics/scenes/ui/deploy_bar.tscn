@@ -43,7 +43,7 @@ theme_override_constants/separation = 2
 [node name="SupportTitleLabel" type="Label" parent="DeckPanel/MarginContainer/DeckScroll/MainColumn/SupportRow" unique_id=383288155]
 layout_mode = 2
 theme_override_font_sizes/font_size = 12
-text = "SUPORTES"
+text = "CARTAS DA PARTIDA"
 
 [node name="SupportSlotsContainer" type="HBoxContainer" parent="DeckPanel/MarginContainer/DeckScroll/MainColumn/SupportRow" unique_id=1430454290]
 layout_mode = 2

@@ -1,7 +1,7 @@
 extends RefCounted
 class_name NecromancerDeckRules
 
-const DECK_ID := "necromancer_deck"
+const DECK_ID := "mordos"
 
 const MASTER_ID := "necromancer_master"
 const SKELETON_ID := "necromancer_skeleton"

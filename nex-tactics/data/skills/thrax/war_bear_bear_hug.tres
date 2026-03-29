@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "war_bear_bear_hug"
+display_name = "Abraco de Urso"
+effect_type = 21
+mana_cost = 80
+cooldown = 0.0
+range = 1
+damage_amount = 4
+physical_power_multiplier = 1.1
+duration_turns = 2
+physical_defense_multiplier = 0.0
+description = "Desfere um golpe pesado e reduz a defesa fisica do alvo a zero por um curto periodo."

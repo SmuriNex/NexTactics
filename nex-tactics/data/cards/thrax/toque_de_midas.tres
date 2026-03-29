@@ -1,0 +1,13 @@
+﻿[gd_resource type="Resource" script_class="CardData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/card_data.gd" id="1_card_data"]
+
+[resource]
+script = ExtResource("1_card_data")
+id = "toque_de_midas"
+display_name = "Toque de Midas"
+card_type = 2
+support_effect_type = 7
+bonus_next_round_gold = 3
+description = "Feitico de ouro. Se voce vencer a rodada, recebe +3 de ouro futuro na proxima fase."
+

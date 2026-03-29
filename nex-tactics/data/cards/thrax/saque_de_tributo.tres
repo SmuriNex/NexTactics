@@ -1,0 +1,13 @@
+﻿[gd_resource type="Resource" script_class="CardData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/card_data.gd" id="1_card_data"]
+
+[resource]
+script = ExtResource("1_card_data")
+id = "saque_de_tributo"
+display_name = "Saque de Tributo"
+card_type = 2
+support_effect_type = 8
+tribute_steal_amount = 2
+description = "Feitico de pilhagem. Se voce vencer e causar dano ao Mestre inimigo, rouba 2 de ouro futuro dele."
+

@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="UnitData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/unit_data.gd" id="1_unit_data"]
+
+[resource]
+script = ExtResource("1_unit_data")
+id = "iron_vanguard"
+display_name = "Vanguarda de Ferro"
+race = 0
+class_type = 1
+cost = 2
+max_hp = 20
+physical_attack = 4
+magic_attack = 0
+physical_defense = 5
+magic_defense = 1
+attack_range = 1
+crit_chance = 0.03
+mana_max = 80
+mana_gain_on_attack = 10
+mana_gain_on_hit = 7
+description = "Humano de linha de frente que segura o centro da mesa para o avanco de Thrax."

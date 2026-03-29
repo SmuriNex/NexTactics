@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "elite_guard_shield_wall"
+display_name = "Parede de Escudos"
+effect_type = 16
+mana_cost = 65
+cooldown = 0.0
+range = 1
+blocked_basic_attack_count = 2
+description = "Bloqueia completamente os proximos 2 ataques basicos recebidos."

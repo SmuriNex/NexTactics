@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="UnitData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/unit_data.gd" id="1_unit_data"]
+
+[resource]
+script = ExtResource("1_unit_data")
+id = "storm_ram"
+display_name = "Aries da Tempestade"
+race = 5
+class_type = 1
+cost = 3
+max_hp = 18
+physical_attack = 5
+magic_attack = 0
+physical_defense = 4
+magic_defense = 1
+attack_range = 1
+crit_chance = 0.05
+mana_max = 80
+mana_gain_on_attack = 10
+mana_gain_on_hit = 7
+description = "Besta pesada usada para esmagar corredores e sustentar a pressao frontal."

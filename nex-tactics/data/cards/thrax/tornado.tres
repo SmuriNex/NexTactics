@@ -1,0 +1,12 @@
+﻿[gd_resource type="Resource" script_class="CardData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/card_data.gd" id="1_card_data"]
+
+[resource]
+script = ExtResource("1_card_data")
+id = "tornado"
+display_name = "Tornado"
+card_type = 2
+support_effect_type = 11
+description = "Armadilha de posicionamento. No inicio do combate, move um inimigo aleatorio para uma casa vazia do seu lado."
+

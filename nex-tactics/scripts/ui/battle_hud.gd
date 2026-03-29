@@ -3,17 +3,15 @@ class_name BattleHUD
 
 signal player_sidebar_entry_pressed(player_id: String)
 signal return_to_local_board_pressed
+signal card_shop_option_selected(card_path: String)
 
-const OBSERVED_BOARD_EMPTY_CELL := "·"
+const OBSERVED_BOARD_EMPTY_CELL := "Â·"
 
 @onready var round_label: Label = $PanelContainer/MarginContainer/VBoxContainer/RoundLabel
 @onready var player_life_label: Label = $PanelContainer/MarginContainer/VBoxContainer/PlayerLifeLabel
-@onready var enemy_life_label: Label = $PanelContainer/MarginContainer/VBoxContainer/EnemyLifeLabel
-@onready var energy_label: Label = $PanelContainer/MarginContainer/VBoxContainer/EnergyLabel
+@onready var gold_label: Label = $PanelContainer/MarginContainer/VBoxContainer/GoldLabel
 @onready var state_label: Label = $PanelContainer/MarginContainer/VBoxContainer/StateLabel
-@onready var selected_deploy_label: Label = $PanelContainer/MarginContainer/VBoxContainer/SelectedDeployLabel
-@onready var synergy_label: Label = $PanelContainer/MarginContainer/VBoxContainer/SynergyLabel
-@onready var round_result_label: Label = $PanelContainer/MarginContainer/VBoxContainer/RoundResultLabel
+@onready var opponent_label: Label = $PanelContainer/MarginContainer/VBoxContainer/OpponentLabel
 @onready var status_panel_container: PanelContainer = $PanelContainer
 @onready var info_panel_container: PanelContainer = $InfoPanelContainer
 @onready var unit_info_title_label: Label = $InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/HeaderPanel/MarginContainer/VBoxContainer/HeaderRow/UnitInfoTitleLabel
@@ -34,34 +32,39 @@ const OBSERVED_BOARD_EMPTY_CELL := "·"
 @onready var observed_board_back_button: Button = $InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/ObservedBoardSectionPanel/MarginContainer/VBoxContainer/ObservedBoardBackButton
 @onready var player_sidebar_panel_container: PanelContainer = $PlayerSidebarPanelContainer
 @onready var player_sidebar_list: VBoxContainer = $PlayerSidebarPanelContainer/MarginContainer/VBoxContainer/PlayersListVBox
+@onready var card_shop_overlay: Control = $CardShopOverlay
+@onready var card_shop_title_label: Label = $CardShopOverlay/CenterContainer/ShopPanel/MarginContainer/VBoxContainer/CardShopTitleLabel
+@onready var card_shop_subtitle_label: Label = $CardShopOverlay/CenterContainer/ShopPanel/MarginContainer/VBoxContainer/CardShopSubtitleLabel
+@onready var card_shop_button_a: Button = $CardShopOverlay/CenterContainer/ShopPanel/MarginContainer/VBoxContainer/CardShopOptionsRow/CardShopOptionButtonA
+@onready var card_shop_button_b: Button = $CardShopOverlay/CenterContainer/ShopPanel/MarginContainer/VBoxContainer/CardShopOptionsRow/CardShopOptionButtonB
 
 var observed_board_cells: Array[Button] = []
+var card_shop_option_paths: Array[String] = []
 
 func _ready() -> void:
 	_build_observed_board_cells()
 	if observed_board_back_button != null:
 		observed_board_back_button.pressed.connect(_on_observed_board_back_button_pressed)
+	if card_shop_button_a != null:
+		card_shop_button_a.pressed.connect(_on_card_shop_option_button_pressed.bind(0))
+	if card_shop_button_b != null:
+		card_shop_button_b.pressed.connect(_on_card_shop_option_button_pressed.bind(1))
 	clear_unit_info()
 	update_player_sidebar([])
+	hide_card_shop()
 
 func update_status(
 	round_number: int,
 	player_life: int,
-	enemy_life: int,
-	energy_value: int,
+	gold_value: int,
 	state_name: String,
-	deploy_selection: String,
-	synergy_summary: String,
-	round_result_summary: String
+	opponent_name: String
 ) -> void:
 	round_label.text = "RODADA %d" % round_number
 	player_life_label.text = "Vida jog.    %d" % player_life
-	enemy_life_label.text = "Vida inim.   %d" % enemy_life
-	energy_label.text = "Energia      %d" % energy_value
+	gold_label.text = "Ouro         %d" % gold_value
 	state_label.text = "Estado       %s" % state_name
-	selected_deploy_label.text = deploy_selection
-	synergy_label.text = "Racas campo  %s" % synergy_summary
-	round_result_label.text = round_result_summary
+	opponent_label.text = "Oponente     %s" % opponent_name
 
 func update_unit_info(unit_state: BattleUnitState) -> void:
 	if unit_state == null or unit_state.unit_data == null:
@@ -108,14 +111,14 @@ func update_card_info(card_data: CardData) -> void:
 		"Descricao: %s" % _translated_card_description(card_data),
 	]
 	var tags_lines: Array[String] = [
-		"Tags: SUPORTE, PREPARO",
+		"Tags: CARTA, PREPARO",
 		"Uso: clique para armar e depois escolha o alvo, quando aplicavel.",
 	]
 
 	_set_info_blocks(
 		card_data.display_name,
-		"Custo %d" % card_data.cost,
-		"SUPORTE | %s" % _support_card_type_name(card_data),
+		"Gratis",
+		"CARTA | %s" % _support_card_type_name(card_data),
 		_join_strings(primary_lines, "\n"),
 		_join_strings(stats_lines, "\n"),
 		_join_strings(skill_lines, "\n"),
@@ -130,8 +133,10 @@ func update_observed_board(snapshot: Dictionary) -> void:
 	info_panel_container.visible = true
 	_set_observed_board_section_titles()
 	_set_observed_board_visible(true)
+	if observed_board_grid != null:
+		observed_board_grid.visible = false
 	_set_info_blocks(
-		"Tabuleiro: %s" % str(snapshot.get("player_name", "Jogador")),
+		"Observando: %s" % str(snapshot.get("player_name", "Jogador")),
 		"%d PV" % int(snapshot.get("life", 0)),
 		"Rodada %d | %s" % [
 			int(snapshot.get("round_number", 0)),
@@ -142,7 +147,12 @@ func update_observed_board(snapshot: Dictionary) -> void:
 		_join_strings(_build_observed_result_lines(snapshot), "\n"),
 		_join_strings(_build_observed_unit_lines(snapshot), "\n")
 	)
-	_refresh_observed_board_grid(snapshot)
+	observed_board_meta_label.text = "Mesa viva observada: %s | Vida %d | Fase %s" % [
+		str(snapshot.get("player_name", "Jogador")),
+		int(snapshot.get("life", 0)),
+		str(snapshot.get("phase", "PREPARACAO")),
+	]
+	observed_board_hint_label.text = "O tabuleiro principal mostra a mesa observada em tempo real. Clique em outro jogador para trocar ou use \"Voltar para meu tabuleiro\"."
 
 func clear_unit_info() -> void:
 	info_panel_container.visible = false
@@ -150,13 +160,15 @@ func clear_unit_info() -> void:
 	_set_observed_board_visible(false)
 	unit_info_title_label.text = "Info da unidade"
 	unit_info_cost_label.text = "Custo -"
-	unit_info_subtitle_label.text = "Clique com o botao direito em uma unidade ou suporte."
+	unit_info_subtitle_label.text = "Clique com o botao direito em uma unidade ou carta."
 	primary_block_label.text = "-"
 	stats_block_label.text = "-"
 	skill_block_label.text = "-"
 	tags_block_label.text = "-"
 
 func is_over_hud(global_pos: Vector2) -> bool:
+	if card_shop_overlay != null and card_shop_overlay.visible:
+		return true
 	if status_panel_container.get_global_rect().has_point(global_pos):
 		return true
 	if player_sidebar_panel_container.get_global_rect().has_point(global_pos):
@@ -167,6 +179,25 @@ func is_over_hud(global_pos: Vector2) -> bool:
 
 func is_info_panel_open() -> bool:
 	return info_panel_container.visible
+
+func is_card_shop_open() -> bool:
+	return card_shop_overlay != null and card_shop_overlay.visible
+
+func show_card_shop(round_number: int, option_entries: Array[Dictionary]) -> void:
+	if card_shop_overlay == null:
+		return
+	card_shop_overlay.visible = true
+	card_shop_option_paths.clear()
+	card_shop_title_label.text = "LOJA DA PARTIDA - RODADA %d" % round_number
+	card_shop_subtitle_label.text = "Escolha 1 carta gratuita. Ela permanece com voce ate o fim da partida."
+	_set_card_shop_button(card_shop_button_a, option_entries, 0)
+	_set_card_shop_button(card_shop_button_b, option_entries, 1)
+
+func hide_card_shop() -> void:
+	if card_shop_overlay == null:
+		return
+	card_shop_overlay.visible = false
+	card_shop_option_paths.clear()
 
 func update_player_sidebar(entries: Array[Dictionary]) -> void:
 	if player_sidebar_list == null:
@@ -196,6 +227,28 @@ func update_player_sidebar(entries: Array[Dictionary]) -> void:
 		row_button.pressed.connect(_on_player_sidebar_button_pressed.bind(str(entry.get("player_id", ""))))
 		player_sidebar_list.add_child(row_button)
 
+func _set_card_shop_button(button: Button, option_entries: Array[Dictionary], index: int) -> void:
+	if button == null:
+		return
+	if index < 0 or index >= option_entries.size():
+		button.visible = false
+		return
+
+	var option_entry: Dictionary = option_entries[index]
+	var card_data: CardData = option_entry.get("card_data", null)
+	var card_path: String = str(option_entry.get("card_path", ""))
+	button.visible = true
+	button.disabled = card_data == null or card_path.is_empty()
+	if card_shop_option_paths.size() <= index:
+		card_shop_option_paths.resize(index + 1)
+	card_shop_option_paths[index] = card_path
+
+	if card_data == null:
+		button.text = "Carta indisponivel"
+		return
+
+	button.text = _format_card_shop_option_text(card_data)
+
 func _build_observed_board_cells() -> void:
 	if observed_board_grid == null:
 		return
@@ -223,15 +276,17 @@ func _set_default_section_titles() -> void:
 	tags_section_title_label.text = "PERFIL E TAGS"
 
 func _set_observed_board_section_titles() -> void:
-	primary_section_title_label.text = "VISAO GERAL"
+	primary_section_title_label.text = "MESA OBSERVADA"
 	stats_section_title_label.text = "FORMACAO"
-	skill_section_title_label.text = "RESOLUCAO DA RODADA"
-	tags_section_title_label.text = "LISTA DE PECAS"
+	skill_section_title_label.text = "STATUS DA RODADA"
+	tags_section_title_label.text = "AJUDA"
 
 func _set_observed_board_visible(value: bool) -> void:
 	if observed_board_section_panel == null:
 		return
 	observed_board_section_panel.visible = value
+	if observed_board_grid != null:
+		observed_board_grid.visible = value
 
 func _refresh_observed_board_grid(snapshot: Dictionary) -> void:
 	for cell_button in observed_board_cells:
@@ -259,48 +314,55 @@ func _refresh_observed_board_grid(snapshot: Dictionary) -> void:
 	observed_board_hint_label.text = "Clique em outro jogador para trocar a observacao. Clique em \"Voltar para meu tabuleiro\" para fechar o preview."
 
 func _build_observed_primary_lines(snapshot: Dictionary) -> Array[String]:
-	return [
+	var lines: Array[String] = [
 		"Vida atual: %d PV" % int(snapshot.get("life", 0)),
 		"Fase salva: %s" % str(snapshot.get("phase", "PREPARACAO")),
-		"Energia da rodada: %d (orcamento %d)" % [
-			int(snapshot.get("energy", 0)),
-			int(snapshot.get("energy_budget", 0)),
+		"Oponente da mesa: %s" % str(snapshot.get("opponent_name", "Sem oponente")),
+		"Ouro da rodada: %d (orcamento %d)" % [
+			int(snapshot.get("gold", 0)),
+			int(snapshot.get("gold_budget", 0)),
 		],
 	]
+	var table_id: String = str(snapshot.get("table_id", ""))
+	if not table_id.is_empty():
+		lines.append("Mesa: %s" % table_id)
+	return lines
 
 func _build_observed_stats_lines(snapshot: Dictionary) -> Array[String]:
 	return [
 		"Mestre: %s" % str(snapshot.get("master_name", "Sem mestre")),
 		"Pecas em campo: %d" % int(snapshot.get("unit_count", 0)),
 		"Unidades alem do mestre: %d" % int(snapshot.get("non_master_count", 0)),
-		"Forca estimada: %d" % int(snapshot.get("power_rating", 0)),
+		"Cartas da partida: %d" % int(snapshot.get("owned_card_count", 0)),
+		"Nivel do lobby: %d | Streak: %d" % [
+			int(snapshot.get("player_level", 1)),
+			int(snapshot.get("streak", 0)),
+		],
 	]
 
 func _build_observed_result_lines(snapshot: Dictionary) -> Array[String]:
 	var lines: Array[String] = []
 	var result_text: String = str(snapshot.get("result_text", ""))
 	if result_text.is_empty():
-		lines.append("Resultado salvo: ainda sem resolucao final desta rodada.")
+		lines.append("Resultado: rodada ainda em andamento.")
 	else:
-		lines.append("Resultado salvo: %s" % result_text)
-	var summary_text: String = str(snapshot.get("summary", ""))
-	if not summary_text.is_empty():
-		lines.append("Resumo: %s" % summary_text)
+		lines.append("Resultado: %s" % result_text)
+	var card_summary: String = str(snapshot.get("card_summary", ""))
+	if not card_summary.is_empty():
+		lines.append("Cartas auto-usadas: %s" % card_summary)
+	var recent_events: Array = snapshot.get("recent_events", [])
+	if not recent_events.is_empty():
+		var latest_event: Dictionary = recent_events[recent_events.size() - 1]
+		var latest_actor: String = str(latest_event.get("actor", "Mesa"))
+		var latest_type: String = str(latest_event.get("type", "evento"))
+		lines.append("Evento recente: %s (%s)" % [latest_actor, latest_type])
 	return lines
 
 func _build_observed_unit_lines(snapshot: Dictionary) -> Array[String]:
-	var lines: Array[String] = []
-	var snapshot_units: Array = snapshot.get("units", [])
-	for unit_variant in snapshot_units:
-		var unit_entry: Dictionary = unit_variant
-		lines.append("%s [%s] @ %s" % [
-			str(unit_entry.get("display_name", "Unidade")),
-			str(unit_entry.get("class_label", "Classe")),
-			unit_entry.get("coord", Vector2i(-1, -1)),
-		])
-	if lines.is_empty():
-		lines.append("Sem pecas visiveis neste snapshot.")
-	return lines
+	return [
+		"Clique com o botao direito em uma peca do board para abrir a ficha dela.",
+		"Use a sidebar para trocar de mesa ou voltar para o seu tabuleiro.",
+	]
 
 func _set_info_blocks(
 	title_text: String,
@@ -412,7 +474,12 @@ func _piece_passive_info(unit_state: BattleUnitState) -> Dictionary:
 		"necromancer_master":
 			return {
 				"name": "Colheita de Almas",
-				"description": "Quando uma unidade morre, o Rei Necromante absorve mana. Mortes inimigas rendem +10 mana e mortes aliadas rendem +12 mana.",
+				"description": "Quando uma unidade morre, Mordos absorve mana. Mortes inimigas rendem +10 mana e mortes aliadas rendem +12 mana.",
+			}
+		"thrax_master":
+			return {
+				"name": "Presenca do Rei",
+				"description": "Aliados nas casas adjacentes a Thrax recebem +30% de ataque fisico. Ao encher a mana, ele provoca inimigos proximos para focarem nele.",
 			}
 		_:
 			return {
@@ -495,6 +562,32 @@ func _active_skill_info(unit_state: BattleUnitState) -> Dictionary:
 			info.target_text = "Prioriza o aliado com maior ataque magico dentro do alcance."
 		GameEnums.SkillEffectType.TARGET_HEAVY_SLOW:
 			info.target_text = "Prioriza o inimigo com maior ataque fisico."
+		GameEnums.SkillEffectType.TARGET_PHYSICAL_VULNERABILITY:
+			info.target_text = "Marca o alvo atual para ele receber mais dano fisico."
+		GameEnums.SkillEffectType.POUNCE_MAGIC_HUNTER_STUN:
+			info.target_text = "Salta no inimigo com maior ataque magico e o atordoa."
+		GameEnums.SkillEffectType.SELF_BASIC_ATTACK_BLOCK:
+			info.target_text = "Sem alvo manual. Bloqueia os proximos ataques basicos recebidos."
+		GameEnums.SkillEffectType.AOE_PHYSICAL_ATTACK_SLOW:
+			info.target_text = "Golpe em area que reduz o ritmo de ataque dos inimigos atingidos."
+		GameEnums.SkillEffectType.MISSING_HEALTH_PHYSICAL_STRIKE:
+			info.target_text = "Usa o alvo atual e escala com o PV perdido do usuario."
+		GameEnums.SkillEffectType.SELF_BERSERK_FRENZY:
+			info.target_text = "Sem alvo manual. Aumenta o ritmo de ataques, mas remove a defesa fisica."
+		GameEnums.SkillEffectType.SELF_CLEAVE_BUFF:
+			info.target_text = "Sem alvo manual. Os proximos ataques basicos ganham cleave."
+		GameEnums.SkillEffectType.TARGET_PHYSICAL_DEFENSE_BREAK_ZERO:
+			info.target_text = "Usa o alvo atual e zera a defesa fisica dele por pouco tempo."
+		GameEnums.SkillEffectType.GAIN_NEXT_ROUND_GOLD:
+			info.target_text = "Sem alvo manual. Gera ouro para a proxima rodada."
+		GameEnums.SkillEffectType.ALLY_HEAL_PERCENT:
+			info.target_text = "Prioriza o aliado com menor vida."
+		GameEnums.SkillEffectType.ADJACENT_LIFESTEAL_GIFT:
+			info.target_text = "Prioriza o aliado adjacente com maior ataque fisico."
+		GameEnums.SkillEffectType.ADJACENT_MANA_GIFT:
+			info.target_text = "Afeta aliados adjacentes."
+		GameEnums.SkillEffectType.MASTER_TAUNT_AURA:
+			info.target_text = "Provoca inimigos proximos para focarem o Mestre."
 		_:
 			info.target_text = ""
 
@@ -513,6 +606,10 @@ func _build_support_stats_lines(card_data: CardData) -> Array[String]:
 		stats_lines.append("Cura de unidade: +%d PV" % card_data.heal_amount)
 	if card_data.magic_attack_multiplier > 1.0:
 		stats_lines.append("Ataque magico: +%d%%" % _ratio_to_percent_gain(card_data.magic_attack_multiplier))
+	if card_data.physical_attack_multiplier > 1.0:
+		stats_lines.append("Ataque fisico: +%d%%" % _ratio_to_percent_gain(card_data.physical_attack_multiplier))
+	if card_data.physical_defense_multiplier > 1.0:
+		stats_lines.append("Defesa fisica: +%d%%" % _ratio_to_percent_gain(card_data.physical_defense_multiplier))
 	if card_data.physical_attack_bonus != 0 or card_data.magic_attack_bonus != 0:
 		stats_lines.append("Ataque: %+d F | %+d M" % [
 			card_data.physical_attack_bonus,
@@ -538,6 +635,12 @@ func _build_support_stats_lines(card_data: CardData) -> Array[String]:
 		stats_lines.append("Atordoamento: %d turnos" % card_data.stun_turns)
 	if card_data.mana_gain_multiplier < 1.0:
 		stats_lines.append("Ganho de mana: %d%% do normal" % int(round(card_data.mana_gain_multiplier * 100.0)))
+	if card_data.attack_range_bonus > 0:
+		stats_lines.append("Alcance basico: +%d" % card_data.attack_range_bonus)
+	if card_data.bonus_next_round_gold > 0:
+		stats_lines.append("Ouro futuro: +%d" % card_data.bonus_next_round_gold)
+	if card_data.tribute_steal_amount > 0:
+		stats_lines.append("Tributo: rouba ate %d" % card_data.tribute_steal_amount)
 	if stats_lines.is_empty():
 		stats_lines.append("Sem modificadores numericos extras.")
 	return stats_lines
@@ -580,6 +683,14 @@ func _on_player_sidebar_button_pressed(player_id: String) -> void:
 func _on_observed_board_back_button_pressed() -> void:
 	return_to_local_board_pressed.emit()
 
+func _on_card_shop_option_button_pressed(option_index: int) -> void:
+	if option_index < 0 or option_index >= card_shop_option_paths.size():
+		return
+	var card_path: String = str(card_shop_option_paths[option_index])
+	if card_path.is_empty():
+		return
+	card_shop_option_selected.emit(card_path)
+
 func _abbreviate_unit_name(display_name: String) -> String:
 	var words: PackedStringArray = display_name.strip_edges().split(" ", false)
 	if words.is_empty():
@@ -591,6 +702,8 @@ func _abbreviate_unit_name(display_name: String) -> String:
 func _observed_board_cell_color(unit_entry: Dictionary) -> Color:
 	if bool(unit_entry.get("is_master", false)):
 		return Color(1.0, 0.90, 0.50, 1.0)
+	if int(unit_entry.get("team_side", GameEnums.TeamSide.PLAYER)) == GameEnums.TeamSide.ENEMY:
+		return Color(1.0, 0.64, 0.60, 1.0)
 
 	var class_label: String = str(unit_entry.get("class_label", "")).to_lower()
 	if class_label.contains("tank") or class_label.contains("ogro"):
@@ -646,6 +759,16 @@ func _support_card_type_name(card_data: CardData) -> String:
 			return "Suporte de gatilho"
 		GameEnums.SupportCardEffectType.CELL_TRAP_STUN:
 			return "Armadilha de celula"
+		GameEnums.SupportCardEffectType.CONDITIONAL_NEXT_ROUND_GOLD:
+			return "Feitico de ouro"
+		GameEnums.SupportCardEffectType.CONDITIONAL_TRIBUTE_STEAL:
+			return "Feitico de pilhagem"
+		GameEnums.SupportCardEffectType.PHYSICAL_DEFENSE_RATIO_BUFF:
+			return "Equipamento defensivo"
+		GameEnums.SupportCardEffectType.PHYSICAL_ATTACK_RANGE_BUFF:
+			return "Equipamento ofensivo"
+		GameEnums.SupportCardEffectType.OPENING_REPOSITION:
+			return "Armadilha de abertura"
 		_:
 			return "Suporte"
 
@@ -665,8 +788,28 @@ func _support_target_name(effect_type: int) -> String:
 			return "Unidade aliada"
 		GameEnums.SupportCardEffectType.CELL_TRAP_STUN:
 			return "Celula inimiga"
+		GameEnums.SupportCardEffectType.CONDITIONAL_NEXT_ROUND_GOLD:
+			return "Sem alvo"
+		GameEnums.SupportCardEffectType.CONDITIONAL_TRIBUTE_STEAL:
+			return "Sem alvo"
+		GameEnums.SupportCardEffectType.PHYSICAL_DEFENSE_RATIO_BUFF:
+			return "Unidade aliada"
+		GameEnums.SupportCardEffectType.PHYSICAL_ATTACK_RANGE_BUFF:
+			return "Unidade aliada"
+		GameEnums.SupportCardEffectType.OPENING_REPOSITION:
+			return "Sem alvo"
 		_:
 			return "Desconhecido"
+
+func _format_card_shop_option_text(card_data: CardData) -> String:
+	if card_data == null:
+		return "Carta indisponivel"
+
+	return "%s\nGratis | %s\n%s\n\nClique para escolher" % [
+		card_data.display_name,
+		_support_card_type_name(card_data),
+		_translated_card_description(card_data),
+	]
 
 func _build_status_text(unit_state: BattleUnitState) -> String:
 	var statuses: Array[String] = []
@@ -686,12 +829,26 @@ func _build_status_text(unit_state: BattleUnitState) -> String:
 		statuses.append("Mana x%.2f" % unit_state.mana_gain_multiplier_status)
 	if unit_state.physical_miss_chance_status > 0.0:
 		statuses.append("Falha F %d%%" % int(round(unit_state.physical_miss_chance_status * 100.0)))
+	if unit_state.get_received_physical_damage_multiplier() > 1.0:
+		statuses.append("Dano F x%.2f" % unit_state.get_received_physical_damage_multiplier())
+	if unit_state.action_charge_multiplier_status != 1.0:
+		statuses.append("Ritmo x%.2f" % unit_state.action_charge_multiplier_status)
 	if unit_state.has_turn_skip():
 		statuses.append("Pula %d" % unit_state.skip_turns_remaining)
 	if unit_state.has_magic_crit_gift():
 		statuses.append("Critico magico pronto")
 	if unit_state.death_mana_ratio_to_master > 0.0:
 		statuses.append("Pacto de Sangue %d%%" % int(round(unit_state.death_mana_ratio_to_master * 100.0)))
+	if unit_state.blocked_basic_attack_count > 0:
+		statuses.append("Bloqueia %d" % unit_state.blocked_basic_attack_count)
+	if unit_state.get_lifesteal_ratio() > 0.0:
+		statuses.append("Roubo de vida %d%%" % int(round(unit_state.get_lifesteal_ratio() * 100.0)))
+	if unit_state.attack_range_bonus_status > 0:
+		statuses.append("Alcance +%d" % unit_state.attack_range_bonus_status)
+	if unit_state.has_cleave_attacks():
+		statuses.append("Cleave %d" % unit_state.cleave_attacks_remaining)
+	if unit_state.has_forced_target():
+		statuses.append("Provocado")
 	return _join_strings(statuses)
 
 func _team_name(team_side: int) -> String:
@@ -725,6 +882,16 @@ func _translated_card_description(card_data: CardData) -> String:
 			return "Quando o aliado marcado morrer, o Mestre ganha 40% da mana maxima."
 		"bone_prison":
 			return "Se um inimigo iniciar na celula marcada, ele fica preso e para de ganhar mana."
+		"toque_de_midas":
+			return "Se voce vencer a rodada, recebe ouro extra na proxima fase."
+		"saque_de_tributo":
+			return "Se voce vencer e causar dano ao Mestre inimigo, rouba ouro futuro dele."
+		"armadura_de_guerra":
+			return "A unidade alvo recebe +40% de defesa fisica nesta rodada."
+		"lanca_de_leonidas":
+			return "A unidade alvo recebe +40% de ataque fisico e +1 de alcance basico nesta rodada."
+		"tornado":
+			return "No inicio do combate, um inimigo aleatorio e puxado para uma casa vazia do seu lado."
 		_:
 			return "Suporte de preparo com efeito especial do deck."
 

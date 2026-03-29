@@ -45,7 +45,7 @@ func move_to_coord(coord: Vector2i, animate: bool = true) -> void:
 		var move_tween := create_tween()
 		move_tween.set_trans(Tween.TRANS_SINE)
 		move_tween.set_ease(Tween.EASE_IN_OUT)
-		move_tween.tween_property(self, "position", target_position, 0.10)
+		move_tween.tween_property(self, "position", target_position, BattleConfig.UNIT_MOVE_TWEEN_SECONDS)
 	else:
 		position = target_position
 
@@ -102,13 +102,13 @@ func on_death() -> void:
 	var tween := create_tween()
 	tween.set_trans(Tween.TRANS_SINE)
 	tween.set_ease(Tween.EASE_IN)
-	tween.parallel().tween_property(self, "scale", Vector3(0.18, 0.06, 0.18), 0.14)
-	tween.parallel().tween_property(body_material, "albedo_color", Color(base_body_color.r, base_body_color.g, base_body_color.b, 0.0), 0.14)
-	tween.parallel().tween_property(top_material, "albedo_color", Color(base_top_color.r, base_top_color.g, base_top_color.b, 0.0), 0.14)
+	tween.parallel().tween_property(self, "scale", Vector3(0.18, 0.06, 0.18), BattleConfig.UNIT_DEATH_FADE_SECONDS)
+	tween.parallel().tween_property(body_material, "albedo_color", Color(base_body_color.r, base_body_color.g, base_body_color.b, 0.0), BattleConfig.UNIT_DEATH_FADE_SECONDS)
+	tween.parallel().tween_property(top_material, "albedo_color", Color(base_top_color.r, base_top_color.g, base_top_color.b, 0.0), BattleConfig.UNIT_DEATH_FADE_SECONDS)
 	if detail_material != null:
-		tween.parallel().tween_property(detail_material, "albedo_color", Color(base_detail_color.r, base_detail_color.g, base_detail_color.b, 0.0), 0.14)
+		tween.parallel().tween_property(detail_material, "albedo_color", Color(base_detail_color.r, base_detail_color.g, base_detail_color.b, 0.0), BattleConfig.UNIT_DEATH_FADE_SECONDS)
 	if ring_material != null:
-		tween.parallel().tween_property(ring_material, "albedo_color", Color(SELECTION_RING_COLOR.r, SELECTION_RING_COLOR.g, SELECTION_RING_COLOR.b, 0.0), 0.14)
+		tween.parallel().tween_property(ring_material, "albedo_color", Color(SELECTION_RING_COLOR.r, SELECTION_RING_COLOR.g, SELECTION_RING_COLOR.b, 0.0), BattleConfig.UNIT_DEATH_FADE_SECONDS)
 	tween.finished.connect(queue_free)
 
 func set_selected(value: bool) -> void:
@@ -232,7 +232,7 @@ func _flash_visual(flash_color: Color, scale_multiplier: float) -> void:
 	var tween := create_tween()
 	tween.set_trans(Tween.TRANS_SINE)
 	tween.set_ease(Tween.EASE_OUT)
-	tween.parallel().tween_property(self, "scale", Vector3.ONE, 0.12)
+	tween.parallel().tween_property(self, "scale", Vector3.ONE, BattleConfig.UNIT_EFFECT_RECOVER_SECONDS)
 	tween.tween_callback(refresh_from_state)
 
 func _update_selection_ring() -> void:

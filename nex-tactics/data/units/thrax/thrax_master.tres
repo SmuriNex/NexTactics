@@ -1,0 +1,26 @@
+[gd_resource type="Resource" script_class="UnitData" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/unit_data.gd" id="1_unit_data"]
+[ext_resource type="Resource" path="res://data/skills/thrax/thrax_war_chant.tres" id="2_master_skill"]
+
+[resource]
+script = ExtResource("1_unit_data")
+id = "thrax_master"
+display_name = "Rei Thrax, o Inabalavel"
+race = 0
+class_type = 1
+class_label = "Bruiser Tank"
+class_short_label = "MST"
+cost = 0
+max_hp = 36
+physical_attack = 8
+magic_attack = 0
+physical_defense = 7
+magic_defense = 2
+attack_range = 1
+crit_chance = 0.04
+mana_max = 80
+mana_gain_on_attack = 16
+mana_gain_on_hit = 10
+master_skill_data = ExtResource("2_master_skill")
+description = "Tanque ofensivo que fortalece aliados adjacentes e atrai o foco inimigo quando canta para a guerra."

@@ -1,0 +1,26 @@
+[gd_resource type="Resource" script_class="UnitData" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/unit_data.gd" id="1_unit_data"]
+[ext_resource type="Resource" path="res://data/skills/thrax/war_bear_bear_hug.tres" id="2_skill_data"]
+
+[resource]
+script = ExtResource("1_unit_data")
+id = "war_bear"
+display_name = "Urso de Batalha"
+race = 5
+class_type = 0
+class_label = "Bruiser"
+class_short_label = "BRU"
+cost = 4
+max_hp = 29
+physical_attack = 8
+magic_attack = 0
+physical_defense = 4
+magic_defense = 1
+attack_range = 1
+crit_chance = 0.04
+mana_max = 80
+mana_gain_on_attack = 10
+mana_gain_on_hit = 9
+skill_data = ExtResource("2_skill_data")
+description = "Besta pesada que amassa armaduras e deixa o alvo exposto ao resto da matilha."

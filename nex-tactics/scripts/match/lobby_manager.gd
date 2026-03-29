@@ -2,16 +2,29 @@ extends RefCounted
 class_name LobbyManager
 
 const CENTER_COLUMNS: Array[int] = [3, 2, 4, 1, 5, 0, 6]
+const BACKGROUND_COMBAT_MAX_ACTIONS := 240
+const LIVE_TABLE_PREP_SECONDS := 1.2
+const LIVE_TABLE_ACTION_STEP_SECONDS := BattleConfig.LIVE_TABLE_ACTION_STEP_SECONDS
+const LIVE_TABLE_OBSERVED_ACTION_STEP_SECONDS := BattleConfig.LIVE_TABLE_OBSERVED_ACTION_STEP_SECONDS
+const LIVE_TABLE_RESULT_HOLD_SECONDS := 0.9
+const CombatInstanceScript := preload("res://scripts/match/combat_instance.gd")
 
 var players: Dictionary = {}
 var player_order: Array[String] = []
 var local_player_id: String = ""
 var deck_cache: Dictionary = {}
 var unit_cache: Dictionary = {}
+var card_cache: Dictionary = {}
+var live_tables: Dictionary = {}
+var combat_instances: Dictionary = {}
+var player_table_map: Dictionary = {}
 
 func setup_demo_lobby(player_count: int, p_local_player_id: String, default_deck_path: String = "") -> void:
 	players.clear()
 	player_order.clear()
+	live_tables.clear()
+	combat_instances.clear()
+	player_table_map.clear()
 	local_player_id = p_local_player_id
 
 	for index in range(player_count):
@@ -25,6 +38,7 @@ func setup_demo_lobby(player_count: int, p_local_player_id: String, default_deck
 		)
 		players[player_id] = player_state
 		player_order.append(player_id)
+		set_player_deck_path(player_id, default_deck_path)
 
 func get_player_ids() -> Array[String]:
 	return player_order.duplicate()
@@ -46,6 +60,97 @@ func get_player(player_id: String) -> MatchPlayerState:
 
 func get_local_player() -> MatchPlayerState:
 	return get_player(local_player_id)
+
+func set_player_deck_path(player_id: String, deck_path: String, reset_owned_cards: bool = true) -> void:
+	var player_state: MatchPlayerState = get_player(player_id)
+	if player_state == null:
+		return
+	player_state.deck_path = deck_path
+	if not reset_owned_cards:
+		return
+	player_state.set_owned_card_paths([])
+	player_state.last_shop_round_claimed = 0
+
+func set_player_owned_cards(player_id: String, card_paths: Array[String], claimed_round: int = -1) -> void:
+	var player_state: MatchPlayerState = get_player(player_id)
+	if player_state == null:
+		return
+	player_state.set_owned_card_paths(card_paths)
+	if claimed_round >= 0:
+		player_state.last_shop_round_claimed = claimed_round
+
+func get_player_owned_cards(player_id: String) -> Array[String]:
+	var player_state: MatchPlayerState = get_player(player_id)
+	if player_state == null:
+		return []
+	return player_state.get_owned_card_paths()
+
+func add_owned_card_to_player(player_id: String, card_path: String, claimed_round: int = -1) -> bool:
+	var player_state: MatchPlayerState = get_player(player_id)
+	if player_state == null:
+		return false
+	var added: bool = player_state.add_owned_card_path(card_path)
+	if claimed_round >= 0:
+		player_state.last_shop_round_claimed = claimed_round
+	return added
+
+func build_card_shop_offer(player_id: String, round_number: int, max_options: int = 2) -> Array[String]:
+	var player_state: MatchPlayerState = get_player(player_id)
+	if player_state == null:
+		return []
+	if round_number <= 0 or round_number % 3 != 0:
+		return []
+
+	var deck_data: DeckData = _load_deck_data(player_state.deck_path)
+	if deck_data == null:
+		return []
+
+	var available_paths: Array[String] = []
+	for card_path in deck_data.card_pool_paths:
+		var resolved_path: String = str(card_path)
+		if resolved_path.is_empty():
+			continue
+		if player_state.has_owned_card_path(resolved_path):
+			continue
+		available_paths.append(resolved_path)
+
+	available_paths.sort_custom(_sort_card_offer_paths.bind(player_state.slot_index, round_number))
+	if max_options > 0 and available_paths.size() > max_options:
+		available_paths.resize(max_options)
+	return available_paths
+
+func grant_periodic_cards_for_round(round_number: int, excluded_player_ids: Array[String] = []) -> Array[Dictionary]:
+	var granted_entries: Array[Dictionary] = []
+	if round_number <= 0 or round_number % 3 != 0:
+		return granted_entries
+
+	for player_id in player_order:
+		if excluded_player_ids.has(player_id):
+			continue
+
+		var player_state: MatchPlayerState = get_player(player_id)
+		if player_state == null or player_state.eliminated:
+			continue
+		if player_state.last_shop_round_claimed >= round_number:
+			continue
+
+		var offer_paths: Array[String] = build_card_shop_offer(player_id, round_number)
+		if offer_paths.is_empty():
+			player_state.last_shop_round_claimed = round_number
+			continue
+
+		var chosen_path: String = _choose_background_shop_pick(player_state, offer_paths, round_number)
+		if chosen_path.is_empty():
+			chosen_path = offer_paths[0]
+		if add_owned_card_to_player(player_id, chosen_path, round_number):
+			var chosen_card: CardData = _load_card_data(chosen_path)
+			granted_entries.append({
+				"player_id": player_id,
+				"player_name": player_state.display_name,
+				"card_path": chosen_path,
+				"card_name": chosen_card.display_name if chosen_card != null else chosen_path,
+			})
+	return granted_entries
 
 func apply_round_pairings(pairings: Array[Dictionary]) -> void:
 	for player_id in player_order:
@@ -70,6 +175,7 @@ func store_board_snapshot(player_id: String, snapshot: Dictionary) -> void:
 	if player_state == null:
 		return
 	player_state.set_board_snapshot(snapshot)
+	player_state.set_round_phase(str(snapshot.get("phase", player_state.current_round_phase)))
 
 func get_board_snapshot(player_id: String) -> Dictionary:
 	var player_state: MatchPlayerState = get_player(player_id)
@@ -77,9 +183,687 @@ func get_board_snapshot(player_id: String) -> Dictionary:
 		return {}
 	return player_state.get_board_snapshot()
 
-func build_remote_round_snapshots(round_number: int, skipped_player_ids: Array[String] = []) -> void:
+func prepare_live_tables_for_round(
+	pairings: Array[Dictionary],
+	round_number: int,
+	excluded_player_ids: Array[String] = []
+) -> void:
+	live_tables.clear()
+	combat_instances.clear()
+	player_table_map.clear()
+
+	var processed_ids: Dictionary = {}
+	for pairing in pairings:
+		var player_a_id: String = str(pairing.get("player_a", ""))
+		var player_b_id: String = str(pairing.get("player_b", ""))
+		if player_a_id.is_empty() or player_b_id.is_empty():
+			continue
+		var player_a: MatchPlayerState = get_player(player_a_id)
+		var player_b: MatchPlayerState = get_player(player_b_id)
+		if excluded_player_ids.has(player_a_id) or excluded_player_ids.has(player_b_id):
+			if player_a != null:
+				player_a.begin_round(player_b_id, "")
+			if player_b != null:
+				player_b.begin_round(player_a_id, "")
+			processed_ids[player_a_id] = true
+			processed_ids[player_b_id] = true
+			continue
+
+		if player_a == null or player_b == null:
+			continue
+		if player_a.current_life <= 0:
+			player_a.eliminated = true
+		if player_b.current_life <= 0:
+			player_b.eliminated = true
+		if player_a.eliminated or player_b.eliminated:
+			player_a.begin_round(player_b_id, "")
+			player_b.begin_round(player_a_id, "")
+			if not player_a.eliminated:
+				player_a.set_board_snapshot(_build_solo_board_snapshot(player_a, round_number))
+			else:
+				player_a.set_board_snapshot(_build_eliminated_snapshot(player_a, round_number))
+			if not player_b.eliminated:
+				player_b.set_board_snapshot(_build_solo_board_snapshot(player_b, round_number))
+			else:
+				player_b.set_board_snapshot(_build_eliminated_snapshot(player_b, round_number))
+			processed_ids[player_a_id] = true
+			processed_ids[player_b_id] = true
+			continue
+
+		var table: Dictionary = _create_live_table(pairing, player_a, player_b, round_number)
+		var table_id: String = str(table.get("table_id", ""))
+		if table_id.is_empty():
+			continue
+		live_tables[table_id] = table
+		combat_instances[table_id] = _build_combat_instance_from_live_table(table, player_a, player_b)
+		player_table_map[player_a_id] = table_id
+		player_table_map[player_b_id] = table_id
+		player_a.begin_round(player_b_id, table_id)
+		player_b.begin_round(player_a_id, table_id)
+		_sync_live_table_snapshots(table)
+		processed_ids[player_a_id] = true
+		processed_ids[player_b_id] = true
+
 	for player_id in player_order:
-		if skipped_player_ids.has(player_id):
+		if processed_ids.has(player_id):
+			continue
+		var player_state: MatchPlayerState = get_player(player_id)
+		if player_state == null:
+			continue
+		if player_state.current_life <= 0:
+			player_state.eliminated = true
+		player_state.begin_round("", "")
+		if player_state.eliminated:
+			player_state.set_board_snapshot(_build_eliminated_snapshot(player_state, round_number))
+		elif not excluded_player_ids.has(player_id):
+			player_state.set_board_snapshot(_build_solo_board_snapshot(player_state, round_number))
+
+func begin_live_tables_battle(round_number: int = -1) -> bool:
+	var changed: bool = false
+	for table_id in live_tables.keys():
+		var table: Dictionary = live_tables.get(table_id, {})
+		if table.is_empty():
+			continue
+		if round_number > 0 and int(table.get("round_number", 0)) != round_number:
+			continue
+		if str(table.get("phase", "PREPARACAO")) != "PREPARACAO":
+			continue
+		_start_live_table_battle(table)
+		live_tables[table_id] = table
+		changed = true
+	return changed
+
+func update_live_tables(delta: float, observed_player_id: String = "") -> bool:
+	var changed: bool = false
+	for table_id in live_tables.keys():
+		var table: Dictionary = live_tables.get(table_id, {})
+		if table.is_empty():
+			continue
+		if _update_live_table(table, delta, observed_player_id):
+			live_tables[table_id] = table
+			changed = true
+	return changed
+
+func force_finish_live_tables(round_number: int = -1) -> Array[Dictionary]:
+	var results: Array[Dictionary] = []
+	for table_id in live_tables.keys():
+		var table: Dictionary = live_tables.get(table_id, {})
+		if table.is_empty():
+			continue
+		if round_number > 0 and int(table.get("round_number", 0)) != round_number:
+			continue
+		if str(table.get("phase", "PREPARACAO")) == "PREPARACAO":
+			_start_live_table_battle(table)
+		if str(table.get("phase", "PREPARACAO")) == "BATALHA":
+			while str(table.get("phase", "PREPARACAO")) == "BATALHA":
+				if _live_table_combat_finished(table):
+					break
+				_advance_live_table_action(table)
+			_finalize_live_table_result(table)
+		live_tables[table_id] = table
+		var result_entry: Dictionary = {
+			"table_id": table_id,
+			"player_a_id": str(table.get("player_a_id", "")),
+			"player_b_id": str(table.get("player_b_id", "")),
+			"result_text": str(table.get("result_text", "")),
+			"winner_id": str(table.get("winner_id", "")),
+			"loser_id": str(table.get("loser_id", "")),
+			"damage": int(table.get("damage", 0)),
+		}
+		if not result_entry.get("result_text", "").is_empty():
+			results.append(result_entry)
+	return results
+
+func is_player_in_live_table(player_id: String) -> bool:
+	return player_table_map.has(player_id)
+
+func get_live_combat_instance_for_player(player_id: String):
+	var table_id: String = str(player_table_map.get(player_id, ""))
+	if table_id.is_empty() or not combat_instances.has(table_id):
+		return null
+	return combat_instances.get(table_id, null)
+
+func _create_live_table(
+	pairing: Dictionary,
+	player_a: MatchPlayerState,
+	player_b: MatchPlayerState,
+	round_number: int
+) -> Dictionary:
+	var lineup_a: Dictionary = _build_background_lineup(player_a, round_number)
+	var lineup_b: Dictionary = _build_background_lineup(player_b, round_number)
+	var snapshot_a: Dictionary = _build_table_snapshot(
+		player_a,
+		player_b,
+		lineup_a,
+		lineup_b,
+		round_number,
+		"PREPARACAO",
+		""
+	)
+
+	return {
+		"table_id": "round_%d_table_%d" % [
+			round_number,
+			int(pairing.get("table_index", player_a.slot_index + player_b.slot_index)),
+		],
+		"table_index": int(pairing.get("table_index", -1)),
+		"round_number": round_number,
+		"player_a_id": player_a.player_id,
+		"player_b_id": player_b.player_id,
+		"lineup_a": lineup_a,
+		"lineup_b": lineup_b,
+		"sim_units": _build_background_sim_units(snapshot_a),
+		"phase": "PREPARACAO",
+		"acting_team": GameEnums.TeamSide.PLAYER if ((player_a.slot_index + player_b.slot_index + round_number) % 2 == 0) else GameEnums.TeamSide.ENEMY,
+		"player_turn_cursor": 0,
+		"enemy_turn_cursor": 0,
+		"action_time_accumulator": 0.0,
+		"actions_taken": 0,
+		"applied_result": false,
+		"winner_id": "",
+		"loser_id": "",
+		"damage": 0,
+		"winner_survivors": -1,
+		"loser_survivors": -1,
+		"player_a_result_text": "",
+		"player_b_result_text": "",
+		"result_text": "",
+		"result_time_remaining": LIVE_TABLE_RESULT_HOLD_SECONDS,
+		"card_summary_a": "",
+		"card_summary_b": "",
+	}
+
+func _build_combat_instance_from_live_table(
+	table: Dictionary,
+	player_a: MatchPlayerState,
+	player_b: MatchPlayerState
+):
+	if table.is_empty() or player_a == null or player_b == null:
+		return null
+
+	var pairing: Dictionary = {
+		"table_index": int(table.get("table_index", -1)),
+	}
+	var combat_instance = CombatInstanceScript.new().setup_from_pairing(
+		pairing,
+		int(table.get("round_number", 0)),
+		player_a,
+		player_b,
+		table.get("lineup_a", {}),
+		table.get("lineup_b", {}),
+		table.get("sim_units", []),
+		int(table.get("acting_team", GameEnums.TeamSide.PLAYER)),
+		LIVE_TABLE_RESULT_HOLD_SECONDS
+	)
+	_sync_combat_instance_from_live_table(table)
+	return combat_instance
+
+func _sync_combat_instance_from_live_table(table: Dictionary) -> void:
+	var table_id: String = str(table.get("table_id", ""))
+	if table_id.is_empty() or not combat_instances.has(table_id):
+		return
+	var combat_instance = combat_instances.get(table_id, null)
+	if combat_instance == null:
+		return
+
+	combat_instance.phase_name = str(table.get("phase", "PREPARACAO"))
+	combat_instance.acting_team = int(table.get("acting_team", GameEnums.TeamSide.PLAYER))
+	combat_instance.player_turn_cursor = int(table.get("player_turn_cursor", 0))
+	combat_instance.enemy_turn_cursor = int(table.get("enemy_turn_cursor", 0))
+	combat_instance.action_time_accumulator = float(table.get("action_time_accumulator", 0.0))
+	combat_instance.actions_taken = int(table.get("actions_taken", 0))
+	combat_instance.applied_result = bool(table.get("applied_result", false))
+	combat_instance.winner_id = str(table.get("winner_id", ""))
+	combat_instance.loser_id = str(table.get("loser_id", ""))
+	combat_instance.damage = int(table.get("damage", 0))
+	combat_instance.winner_survivors = int(table.get("winner_survivors", -1))
+	combat_instance.loser_survivors = int(table.get("loser_survivors", -1))
+	combat_instance.player_a_result_text = str(table.get("player_a_result_text", ""))
+	combat_instance.player_b_result_text = str(table.get("player_b_result_text", ""))
+	combat_instance.result_text = str(table.get("result_text", ""))
+	combat_instance.result_time_remaining = float(table.get("result_time_remaining", LIVE_TABLE_RESULT_HOLD_SECONDS))
+	combat_instance.player_a_card_summary = str(table.get("card_summary_a", ""))
+	combat_instance.player_b_card_summary = str(table.get("card_summary_b", ""))
+	combat_instance.sim_units = table.get("sim_units", []).duplicate(true)
+
+func _update_live_table(table: Dictionary, delta: float, observed_player_id: String) -> bool:
+	if table.is_empty():
+		return false
+
+	var phase_name: String = str(table.get("phase", "PREPARACAO"))
+	if phase_name == "PREPARACAO":
+		return false
+	if phase_name == "RESULTADO":
+		var remaining_time: float = maxf(0.0, float(table.get("result_time_remaining", LIVE_TABLE_RESULT_HOLD_SECONDS)) - delta)
+		if is_equal_approx(remaining_time, float(table.get("result_time_remaining", LIVE_TABLE_RESULT_HOLD_SECONDS))):
+			return false
+		table["result_time_remaining"] = remaining_time
+		_sync_combat_instance_from_live_table(table)
+		return true
+
+	var changed: bool = false
+	var observed_table: bool = _live_table_contains_player(table, observed_player_id)
+	var step_seconds: float = LIVE_TABLE_OBSERVED_ACTION_STEP_SECONDS if observed_table else LIVE_TABLE_ACTION_STEP_SECONDS
+	var accumulator: float = float(table.get("action_time_accumulator", 0.0)) + delta
+	while accumulator >= step_seconds and str(table.get("phase", "PREPARACAO")) == "BATALHA":
+		accumulator -= step_seconds
+		if _live_table_combat_finished(table):
+			break
+		if not _advance_live_table_action(table):
+			break
+		changed = true
+		if _live_table_combat_finished(table):
+			break
+	table["action_time_accumulator"] = accumulator
+
+	if str(table.get("phase", "PREPARACAO")) == "BATALHA" and _live_table_combat_finished(table):
+		_finalize_live_table_result(table)
+		changed = true
+	elif changed:
+		_sync_live_table_snapshots(table)
+	return changed
+
+func _start_live_table_battle(table: Dictionary) -> void:
+	if table.is_empty():
+		return
+	if str(table.get("phase", "PREPARACAO")) != "PREPARACAO":
+		return
+
+	var player_a: MatchPlayerState = get_player(str(table.get("player_a_id", "")))
+	var player_b: MatchPlayerState = get_player(str(table.get("player_b_id", "")))
+	var sim_units: Array[Dictionary] = table.get("sim_units", [])
+	table["card_summary_a"] = _apply_live_table_cards_to_team(sim_units, GameEnums.TeamSide.PLAYER, player_a)
+	table["card_summary_b"] = _apply_live_table_cards_to_team(sim_units, GameEnums.TeamSide.ENEMY, player_b)
+	table["phase"] = "BATALHA"
+	table["action_time_accumulator"] = 0.0
+	table["actions_taken"] = 0
+	table["result_text"] = ""
+	_sync_combat_instance_from_live_table(table)
+	var combat_instance = combat_instances.get(str(table.get("table_id", "")), null)
+	if combat_instance != null:
+		combat_instance.begin_battle()
+	_sync_live_table_snapshots(table)
+
+func _advance_live_table_action(table: Dictionary) -> bool:
+	if table.is_empty():
+		return false
+	var sim_units: Array[Dictionary] = table.get("sim_units", [])
+	if sim_units.is_empty():
+		return false
+	if _live_table_combat_finished(table):
+		return false
+
+	var acting_team: int = int(table.get("acting_team", GameEnums.TeamSide.PLAYER))
+	var actor: Dictionary = _pop_live_table_actor(table, acting_team)
+	if actor.is_empty():
+		acting_team = _opposite_team(acting_team)
+		actor = _pop_live_table_actor(table, acting_team)
+		if actor.is_empty():
+			return false
+
+	var table_id: String = str(table.get("table_id", ""))
+	var combat_instance = combat_instances.get(table_id, null)
+	var actor_name: String = str(actor.get("display_name", "Unidade"))
+	var from_coord: Vector2i = actor.get("coord", Vector2i(-1, -1))
+	_background_take_action(actor, sim_units)
+	if combat_instance != null:
+		combat_instance.push_event("unit_action", {
+			"actor": actor_name,
+			"team_side": int(actor.get("team_side", GameEnums.TeamSide.PLAYER)),
+			"from_coord": from_coord,
+			"to_coord": actor.get("coord", Vector2i(-1, -1)),
+		})
+	table["acting_team"] = _opposite_team(acting_team)
+	table["actions_taken"] = int(table.get("actions_taken", 0)) + 1
+	_sync_combat_instance_from_live_table(table)
+	_sync_live_table_snapshots(table)
+	return true
+
+func _pop_live_table_actor(table: Dictionary, team_side: int) -> Dictionary:
+	var sim_units: Array[Dictionary] = table.get("sim_units", [])
+	var turn_order: Array[Dictionary] = _background_team_turn_order(sim_units, team_side)
+	if turn_order.is_empty():
+		return {}
+
+	var cursor_key: String = "player_turn_cursor" if team_side == GameEnums.TeamSide.PLAYER else "enemy_turn_cursor"
+	var cursor: int = int(table.get(cursor_key, 0))
+	if cursor < 0:
+		cursor = 0
+	if cursor >= turn_order.size():
+		cursor = 0
+
+	var actor: Dictionary = turn_order[cursor]
+	cursor += 1
+	if cursor >= turn_order.size():
+		cursor = 0
+	table[cursor_key] = cursor
+	return actor
+
+func _live_table_combat_finished(table: Dictionary) -> bool:
+	if table.is_empty():
+		return true
+	var sim_units: Array[Dictionary] = table.get("sim_units", [])
+	if sim_units.is_empty():
+		return true
+	if not _background_team_alive(sim_units, GameEnums.TeamSide.PLAYER):
+		return true
+	if not _background_team_alive(sim_units, GameEnums.TeamSide.ENEMY):
+		return true
+	return int(table.get("actions_taken", 0)) >= BACKGROUND_COMBAT_MAX_ACTIONS
+
+func _finalize_live_table_result(table: Dictionary) -> void:
+	if table.is_empty():
+		return
+	if bool(table.get("applied_result", false)):
+		return
+
+	var player_a: MatchPlayerState = get_player(str(table.get("player_a_id", "")))
+	var player_b: MatchPlayerState = get_player(str(table.get("player_b_id", "")))
+	if player_a == null or player_b == null:
+		return
+
+	var sim_units: Array[Dictionary] = table.get("sim_units", [])
+	var winner_team: int = _background_winner_team(sim_units)
+	var winner_id: String = ""
+	var loser_id: String = ""
+	var damage: int = 0
+	var winner_survivors: int = -1
+	var loser_survivors: int = -1
+	var player_a_result_text: String = "Empate ao vivo contra %s" % player_b.display_name
+	var player_b_result_text: String = "Empate ao vivo contra %s" % player_a.display_name
+
+	if winner_team >= 0:
+		winner_id = player_a.player_id if winner_team == GameEnums.TeamSide.PLAYER else player_b.player_id
+		loser_id = player_b.player_id if winner_team == GameEnums.TeamSide.PLAYER else player_a.player_id
+		winner_survivors = _count_background_survivors(sim_units, winner_team)
+		loser_survivors = _count_background_survivors(sim_units, _opposite_team(winner_team))
+		damage = clampi(maxi(1, winner_survivors), 1, 8)
+
+		var loser_state: MatchPlayerState = get_player(loser_id)
+		if loser_state != null:
+			loser_state.current_life = maxi(0, loser_state.current_life - damage)
+			loser_state.eliminated = loser_state.current_life <= 0
+		_apply_round_reward_cards(get_player(winner_id), loser_state, damage)
+
+		if winner_team == GameEnums.TeamSide.PLAYER:
+			player_a_result_text = "%s venceu %s ao vivo e causou %d de dano" % [
+				player_a.display_name,
+				player_b.display_name,
+				damage,
+			]
+			player_b_result_text = "%s perdeu para %s ao vivo e sofreu %d de dano" % [
+				player_b.display_name,
+				player_a.display_name,
+				damage,
+			]
+		else:
+			player_a_result_text = "%s perdeu para %s ao vivo e sofreu %d de dano" % [
+				player_a.display_name,
+				player_b.display_name,
+				damage,
+			]
+			player_b_result_text = "%s venceu %s ao vivo e causou %d de dano" % [
+				player_b.display_name,
+				player_a.display_name,
+				damage,
+			]
+
+	player_a.last_round_result_text = player_a_result_text
+	player_b.last_round_result_text = player_b_result_text
+	player_a.eliminated = player_a.current_life <= 0
+	player_b.eliminated = player_b.current_life <= 0
+	table["phase"] = "RESULTADO"
+	table["applied_result"] = true
+	table["winner_id"] = winner_id
+	table["loser_id"] = loser_id
+	table["damage"] = damage
+	table["winner_survivors"] = winner_survivors
+	table["loser_survivors"] = loser_survivors
+	table["player_a_result_text"] = player_a_result_text
+	table["player_b_result_text"] = player_b_result_text
+	table["result_text"] = player_a_result_text
+	table["result_time_remaining"] = LIVE_TABLE_RESULT_HOLD_SECONDS
+	player_a.record_round_result(int(table.get("round_number", 0)), player_a_result_text, winner_id == player_a.player_id, damage if loser_id == player_a.player_id else 0)
+	player_b.record_round_result(int(table.get("round_number", 0)), player_b_result_text, winner_id == player_b.player_id, damage if loser_id == player_b.player_id else 0)
+	player_a.set_round_phase("RESULTADO")
+	player_b.set_round_phase("RESULTADO")
+	_sync_combat_instance_from_live_table(table)
+	var combat_instance = combat_instances.get(str(table.get("table_id", "")), null)
+	if combat_instance != null:
+		combat_instance.begin_result(LIVE_TABLE_RESULT_HOLD_SECONDS)
+		combat_instance.push_event("battle_result", {
+			"winner_id": winner_id,
+			"loser_id": loser_id,
+			"damage": damage,
+			"result_text": player_a_result_text,
+		})
+	_sync_live_table_snapshots(table)
+
+func _sync_live_table_snapshots(table: Dictionary) -> void:
+	if table.is_empty():
+		return
+
+	var player_a: MatchPlayerState = get_player(str(table.get("player_a_id", "")))
+	var player_b: MatchPlayerState = get_player(str(table.get("player_b_id", "")))
+	if player_a == null or player_b == null:
+		return
+
+	var phase_name: String = str(table.get("phase", "PREPARACAO"))
+	player_a.set_round_phase(phase_name)
+	player_b.set_round_phase(phase_name)
+	var combat_instance = combat_instances.get(str(table.get("table_id", "")), null)
+	var recent_events: Array[Dictionary] = combat_instance.get_recent_events() if combat_instance != null else []
+	if phase_name == "PREPARACAO":
+		player_a.set_board_snapshot(_build_table_snapshot(
+			player_a,
+			player_b,
+			table.get("lineup_a", {}),
+			table.get("lineup_b", {}),
+			int(table.get("round_number", 0)),
+			phase_name,
+			str(table.get("player_a_result_text", "")),
+			str(table.get("card_summary_a", "")),
+			recent_events
+		))
+		player_b.set_board_snapshot(_build_table_snapshot(
+			player_b,
+			player_a,
+			table.get("lineup_b", {}),
+			table.get("lineup_a", {}),
+			int(table.get("round_number", 0)),
+			phase_name,
+			str(table.get("player_b_result_text", "")),
+			str(table.get("card_summary_b", "")),
+			recent_events
+		))
+		return
+
+	var sim_units: Array[Dictionary] = table.get("sim_units", [])
+	player_a.set_board_snapshot(_build_snapshot_from_sim_units(
+		player_a,
+		player_b,
+		sim_units,
+		GameEnums.TeamSide.PLAYER,
+		int(table.get("round_number", 0)),
+		phase_name,
+		str(table.get("player_a_result_text", "")),
+		str(table.get("card_summary_a", "")),
+		recent_events
+	))
+	player_b.set_board_snapshot(_build_snapshot_from_sim_units(
+		player_b,
+		player_a,
+		sim_units,
+		GameEnums.TeamSide.ENEMY,
+		int(table.get("round_number", 0)),
+		phase_name,
+		str(table.get("player_b_result_text", "")),
+		str(table.get("card_summary_b", "")),
+		recent_events
+	))
+
+func _live_table_contains_player(table: Dictionary, player_id: String) -> bool:
+	if player_id.is_empty():
+		return false
+	return str(table.get("player_a_id", "")) == player_id or str(table.get("player_b_id", "")) == player_id
+
+func _apply_live_table_cards_to_team(sim_units: Array[Dictionary], team_side: int, owner_state: MatchPlayerState) -> String:
+	if owner_state == null or sim_units.is_empty():
+		return ""
+
+	var applied_lines: Array[String] = []
+	for card_path in owner_state.get_owned_card_paths():
+		var card_data: CardData = _load_card_data(card_path)
+		if card_data == null:
+			continue
+		var effect_text: String = _apply_live_table_card_effect(sim_units, team_side, owner_state, card_data)
+		if not effect_text.is_empty():
+			applied_lines.append(effect_text)
+	return _join_strings(applied_lines, " | ")
+
+func _apply_live_table_card_effect(
+	sim_units: Array[Dictionary],
+	team_side: int,
+	owner_state: MatchPlayerState,
+	card_data: CardData
+) -> String:
+	if card_data == null:
+		return ""
+
+	match card_data.support_effect_type:
+		GameEnums.SupportCardEffectType.PLAYER_LIFE_HEAL:
+			if owner_state != null and card_data.global_life_heal > 0:
+				var previous_life: int = owner_state.current_life
+				owner_state.current_life = mini(BattleConfig.GLOBAL_LIFE, owner_state.current_life + card_data.global_life_heal)
+				if owner_state.current_life > previous_life:
+					return "%s curou %+d PV" % [card_data.display_name, owner_state.current_life - previous_life]
+			return ""
+		GameEnums.SupportCardEffectType.UNIT_ATTACK_BUFF:
+			var attack_target: Dictionary = _pick_live_table_ally_target(sim_units, team_side, false)
+			if attack_target.is_empty():
+				return ""
+			attack_target["physical_attack"] = int(attack_target.get("physical_attack", 0)) + card_data.physical_attack_bonus
+			attack_target["magic_attack"] = int(attack_target.get("magic_attack", 0)) + card_data.magic_attack_bonus
+			return "%s em %s" % [card_data.display_name, str(attack_target.get("display_name", "aliado"))]
+		GameEnums.SupportCardEffectType.MAGIC_ATTACK_MULTIPLIER:
+			var magic_target: Dictionary = _pick_live_table_ally_target(sim_units, team_side, true)
+			if magic_target.is_empty():
+				return ""
+			var base_magic: int = int(magic_target.get("magic_attack", 0))
+			magic_target["magic_attack"] = maxi(base_magic, int(round(float(base_magic) * card_data.magic_attack_multiplier)))
+			return "%s em %s" % [card_data.display_name, str(magic_target.get("display_name", "aliado"))]
+		GameEnums.SupportCardEffectType.START_STEALTH:
+			var stealth_target: Dictionary = _pick_live_table_ally_target(sim_units, team_side, false)
+			if stealth_target.is_empty():
+				return ""
+			stealth_target["initiative_bonus"] = int(stealth_target.get("initiative_bonus", 0)) + 18
+			stealth_target["physical_defense"] = int(stealth_target.get("physical_defense", 0)) + 2
+			stealth_target["magic_defense"] = int(stealth_target.get("magic_defense", 0)) + 2
+			return "%s acelerou %s" % [card_data.display_name, str(stealth_target.get("display_name", "aliado"))]
+		GameEnums.SupportCardEffectType.DELAYED_BLIND_FIELD:
+			var affected_units: int = 0
+			for unit_entry in sim_units:
+				if not bool(unit_entry.get("alive", false)):
+					continue
+				if int(unit_entry.get("team_side", GameEnums.TeamSide.PLAYER)) == team_side:
+					continue
+				var base_physical: int = int(unit_entry.get("physical_attack", 0))
+				unit_entry["physical_attack"] = maxi(0, int(round(float(base_physical) * (1.0 - (card_data.physical_miss_chance * 0.45)))))
+				affected_units += 1
+			if affected_units > 0:
+				return "%s enfraqueceu %d inimigos" % [card_data.display_name, affected_units]
+			return ""
+		GameEnums.SupportCardEffectType.DEATH_MANA_PACT:
+			var master_target: Dictionary = _pick_live_table_master(sim_units, team_side)
+			if master_target.is_empty():
+				return ""
+			master_target["magic_attack"] = int(master_target.get("magic_attack", 0)) + 2
+			master_target["current_hp"] = int(master_target.get("current_hp", 0)) + 14
+			master_target["max_hp"] = int(master_target.get("max_hp", 0)) + 14
+			return "%s reforcou o Mestre" % card_data.display_name
+		GameEnums.SupportCardEffectType.CELL_TRAP_STUN:
+			var trap_target: Dictionary = _pick_live_table_enemy_trap_target(sim_units, team_side)
+			if trap_target.is_empty():
+				return ""
+			trap_target["skip_turns_remaining"] = maxi(int(trap_target.get("skip_turns_remaining", 0)), maxi(1, card_data.stun_turns))
+			return "%s travou %s" % [card_data.display_name, str(trap_target.get("display_name", "alvo"))]
+		GameEnums.SupportCardEffectType.PHYSICAL_DEFENSE_RATIO_BUFF:
+			var defense_target: Dictionary = _pick_live_table_ally_target(sim_units, team_side, false)
+			if defense_target.is_empty():
+				return ""
+			var base_defense: int = int(defense_target.get("physical_defense", 0))
+			defense_target["physical_defense"] = base_defense + int(ceil(float(base_defense) * (card_data.physical_defense_multiplier - 1.0)))
+			return "%s protegeu %s" % [card_data.display_name, str(defense_target.get("display_name", "aliado"))]
+		GameEnums.SupportCardEffectType.PHYSICAL_ATTACK_RANGE_BUFF:
+			var spear_target: Dictionary = _pick_live_table_ally_target(sim_units, team_side, false)
+			if spear_target.is_empty():
+				return ""
+			var base_attack: int = int(spear_target.get("physical_attack", 0))
+			spear_target["physical_attack"] = base_attack + int(ceil(float(base_attack) * (card_data.physical_attack_multiplier - 1.0)))
+			spear_target["attack_range"] = int(spear_target.get("attack_range", 1)) + maxi(0, card_data.attack_range_bonus)
+			return "%s fortaleceu %s" % [card_data.display_name, str(spear_target.get("display_name", "aliado"))]
+		GameEnums.SupportCardEffectType.OPENING_REPOSITION:
+			var swirl_target: Dictionary = _pick_live_table_enemy_trap_target(sim_units, team_side)
+			if swirl_target.is_empty():
+				return ""
+			swirl_target["initiative_bonus"] = int(swirl_target.get("initiative_bonus", 0)) - 14
+			return "%s baguncou o posicionamento de %s" % [card_data.display_name, str(swirl_target.get("display_name", "alvo"))]
+		_:
+			return ""
+
+func _pick_live_table_ally_target(sim_units: Array[Dictionary], team_side: int, prefer_magic: bool) -> Dictionary:
+	var best_target: Dictionary = {}
+	var best_score: int = -100000
+	for unit_entry in sim_units:
+		if not bool(unit_entry.get("alive", false)):
+			continue
+		if int(unit_entry.get("team_side", GameEnums.TeamSide.PLAYER)) != team_side:
+			continue
+		var score: int = 0
+		score += int(unit_entry.get("magic_attack", 0)) * 6 if prefer_magic else int(unit_entry.get("physical_attack", 0)) * 6
+		score += int(unit_entry.get("magic_attack", 0)) * 2
+		score += int(unit_entry.get("physical_attack", 0)) * 2
+		score += int(unit_entry.get("current_hp", 0))
+		if bool(unit_entry.get("is_master", false)):
+			score -= 12
+		if best_target.is_empty() or score > best_score:
+			best_target = unit_entry
+			best_score = score
+	return best_target
+
+func _pick_live_table_master(sim_units: Array[Dictionary], team_side: int) -> Dictionary:
+	for unit_entry in sim_units:
+		if not bool(unit_entry.get("alive", false)):
+			continue
+		if int(unit_entry.get("team_side", GameEnums.TeamSide.PLAYER)) != team_side:
+			continue
+		if bool(unit_entry.get("is_master", false)):
+			return unit_entry
+	return {}
+
+func _pick_live_table_enemy_trap_target(sim_units: Array[Dictionary], team_side: int) -> Dictionary:
+	var best_target: Dictionary = {}
+	var best_score: int = 100000
+	for unit_entry in sim_units:
+		if not bool(unit_entry.get("alive", false)):
+			continue
+		if int(unit_entry.get("team_side", GameEnums.TeamSide.PLAYER)) == team_side:
+			continue
+		var coord: Vector2i = unit_entry.get("coord", Vector2i(-1, -1))
+		var score: int = abs(coord.x - 3) * 10
+		score += coord.y if team_side == GameEnums.TeamSide.PLAYER else (BattleConfig.BOARD_HEIGHT - 1 - coord.y)
+		if bool(unit_entry.get("is_master", false)):
+			score += 8
+		if best_target.is_empty() or score < best_score:
+			best_target = unit_entry
+			best_score = score
+	return best_target
+
+func build_remote_round_snapshots(round_number: int, skipped_player_ids: Array[String] = []) -> void:
+	var processed_ids: Dictionary = {}
+
+	for player_id in player_order:
+		if processed_ids.has(player_id):
 			continue
 
 		var player_state: MatchPlayerState = get_player(player_id)
@@ -87,10 +871,44 @@ func build_remote_round_snapshots(round_number: int, skipped_player_ids: Array[S
 			continue
 		if player_state.current_life <= 0:
 			player_state.eliminated = true
-			player_state.set_board_snapshot(_build_eliminated_snapshot(player_state, round_number))
+			if not skipped_player_ids.has(player_id):
+				player_state.set_board_snapshot(_build_eliminated_snapshot(player_state, round_number))
+			processed_ids[player_id] = true
 			continue
 
-		player_state.set_board_snapshot(_build_background_board_snapshot(player_state, round_number))
+		var opponent_id: String = player_state.opponent_id_this_round
+		var opponent_state: MatchPlayerState = get_player(opponent_id)
+		if opponent_state == null or opponent_state.current_life <= 0:
+			if not skipped_player_ids.has(player_id):
+				player_state.set_board_snapshot(_build_solo_board_snapshot(player_state, round_number))
+			processed_ids[player_id] = true
+			continue
+
+		var lineup_a: Dictionary = _build_background_lineup(player_state, round_number)
+		var lineup_b: Dictionary = _build_background_lineup(opponent_state, round_number)
+		if not skipped_player_ids.has(player_id):
+			player_state.set_board_snapshot(_build_table_snapshot(
+				player_state,
+				opponent_state,
+				lineup_a,
+				lineup_b,
+				round_number,
+				"PREPARACAO",
+				""
+			))
+		if not skipped_player_ids.has(opponent_id):
+			opponent_state.set_board_snapshot(_build_table_snapshot(
+				opponent_state,
+				player_state,
+				lineup_b,
+				lineup_a,
+				round_number,
+				"PREPARACAO",
+				""
+			))
+
+		processed_ids[player_id] = true
+		processed_ids[opponent_id] = true
 
 func resolve_background_pairings(
 	pairings: Array[Dictionary],
@@ -114,15 +932,13 @@ func resolve_background_pairings(
 
 		var snapshot_a: Dictionary = player_a.get_board_snapshot()
 		if snapshot_a.is_empty():
-			snapshot_a = _build_background_board_snapshot(player_a, round_number)
+			var lineup_a: Dictionary = _build_background_lineup(player_a, round_number)
+			var lineup_b: Dictionary = _build_background_lineup(player_b, round_number)
+			snapshot_a = _build_table_snapshot(player_a, player_b, lineup_a, lineup_b, round_number, "PREPARACAO", "")
 			player_a.set_board_snapshot(snapshot_a)
+			player_b.set_board_snapshot(_build_table_snapshot(player_b, player_a, lineup_b, lineup_a, round_number, "PREPARACAO", ""))
 
-		var snapshot_b: Dictionary = player_b.get_board_snapshot()
-		if snapshot_b.is_empty():
-			snapshot_b = _build_background_board_snapshot(player_b, round_number)
-			player_b.set_board_snapshot(snapshot_b)
-
-		var result: Dictionary = _resolve_background_match(player_a, player_b, snapshot_a, snapshot_b, round_number)
+		var result: Dictionary = _resolve_background_match(player_a, player_b, snapshot_a, round_number)
 		_apply_background_match_result(player_a, player_b, result)
 		results.append(result)
 
@@ -136,82 +952,85 @@ func _apply_background_match_result(
 	if player_a == null or player_b == null:
 		return
 
-	var winner_id: String = str(result.get("winner_id", ""))
 	var loser_id: String = str(result.get("loser_id", ""))
 	var damage: int = int(result.get("damage", 0))
-	var result_text: String = str(result.get("result_text", ""))
+	var winner_state: MatchPlayerState = get_player(str(result.get("winner_id", "")))
+	var loser_state: MatchPlayerState = null
+	if not loser_id.is_empty():
+		loser_state = get_player(loser_id)
+		if loser_state != null:
+			loser_state.current_life = maxi(0, loser_state.current_life - damage)
+			loser_state.eliminated = loser_state.current_life <= 0
+	_apply_round_reward_cards(winner_state, loser_state, damage)
 
-	if winner_id.is_empty() or loser_id.is_empty():
-		player_a.last_round_result_text = "Empate contra %s" % player_b.display_name
-		player_b.last_round_result_text = "Empate contra %s" % player_a.display_name
-		player_a.set_board_snapshot(_decorate_snapshot_with_result(player_a, player_a.get_board_snapshot(), "RESULTADO", player_a.last_round_result_text, -1))
-		player_b.set_board_snapshot(_decorate_snapshot_with_result(player_b, player_b.get_board_snapshot(), "RESULTADO", player_b.last_round_result_text, -1))
-		return
+	player_a.eliminated = player_a.current_life <= 0
+	player_b.eliminated = player_b.current_life <= 0
+	player_a.last_round_result_text = str(result.get("player_a_result_text", ""))
+	player_b.last_round_result_text = str(result.get("player_b_result_text", ""))
 
-	var winner_state: MatchPlayerState = get_player(winner_id)
-	var loser_state: MatchPlayerState = get_player(loser_id)
-	if winner_state == null or loser_state == null:
-		return
+	var snapshot_a: Dictionary = result.get("snapshot_a", player_a.get_board_snapshot())
+	var snapshot_b: Dictionary = result.get("snapshot_b", player_b.get_board_snapshot())
+	snapshot_a["life"] = player_a.current_life
+	snapshot_b["life"] = player_b.current_life
+	player_a.set_board_snapshot(snapshot_a)
+	player_b.set_board_snapshot(snapshot_b)
 
-	loser_state.current_life = maxi(0, loser_state.current_life - damage)
-	loser_state.eliminated = loser_state.current_life <= 0
-	winner_state.eliminated = winner_state.current_life <= 0
+func _build_solo_board_snapshot(player_state: MatchPlayerState, round_number: int) -> Dictionary:
+	var lineup: Dictionary = _build_background_lineup(player_state, round_number)
+	return _build_table_snapshot(player_state, null, lineup, {}, round_number, "PREPARACAO", "")
 
-	winner_state.last_round_result_text = result_text
-	loser_state.last_round_result_text = "%s | Vida restante %d" % [
-		str(result.get("loser_text", "")),
-		loser_state.current_life,
-	]
-
-	var winner_survivors: int = int(result.get("winner_survivors", -1))
-	var loser_survivors: int = int(result.get("loser_survivors", -1))
-	winner_state.set_board_snapshot(_decorate_snapshot_with_result(
-		winner_state,
-		winner_state.get_board_snapshot(),
-		"RESULTADO",
-		winner_state.last_round_result_text,
-		winner_survivors
-	))
-	loser_state.set_board_snapshot(_decorate_snapshot_with_result(
-		loser_state,
-		loser_state.get_board_snapshot(),
-		"RESULTADO",
-		loser_state.last_round_result_text,
-		loser_survivors
-	))
-
-func _build_background_board_snapshot(player_state: MatchPlayerState, round_number: int) -> Dictionary:
+func _build_background_lineup(player_state: MatchPlayerState, round_number: int) -> Dictionary:
 	if player_state == null:
 		return {}
 
 	var deck_data: DeckData = _load_deck_data(player_state.deck_path)
 	if deck_data == null:
-		return _build_empty_snapshot(player_state, round_number, "SEM DECK")
+		return {
+			"player_id": player_state.player_id,
+			"player_name": player_state.display_name,
+			"gold": 0,
+			"gold_budget": 0,
+			"units": [],
+			"unit_count": 0,
+			"non_master_count": 0,
+			"power_rating": 0,
+			"master_name": "Sem mestre",
+		}
 
-	var available_energy: int = BattleConfig.STARTING_ENERGY + ((round_number - 1) * BattleConfig.ENERGY_PER_ROUND)
-	var effective_energy: int = _effective_energy_budget(available_energy, round_number)
+	var available_gold: int = BattleConfig.STARTING_GOLD + ((round_number - 1) * BattleConfig.GOLD_PER_ROUND)
+	if player_state.banked_gold > 0:
+		available_gold += player_state.banked_gold
+		player_state.banked_gold = 0
+	var effective_gold: int = _effective_gold_budget(available_gold, round_number)
 	var field_limit: int = _effective_field_limit(BattleConfig.MAX_FIELD_UNITS, round_number)
-	var remaining_energy: int = effective_energy
+	var remaining_gold: int = effective_gold
 	var occupied_coords: Array[Vector2i] = []
 	var units: Array[Dictionary] = []
-	var total_power: int = 0
+	var total_power: int = _estimate_owned_cards_power_bonus(player_state.get_owned_card_paths())
 
-	var master_data: UnitData = _load_unit_data(deck_data.master_unit_path)
+	var master_data: UnitData = _load_unit_data(deck_data.master_data_path)
 	if master_data != null:
 		var master_coord := Vector2i(3, BattleConfig.BOARD_HEIGHT - 1)
-		var master_entry: Dictionary = _build_snapshot_unit_entry(master_data, master_coord, true)
-		units.append(master_entry)
+		units.append(_build_snapshot_unit_entry(
+			master_data,
+			deck_data.master_data_path,
+			master_coord,
+			true,
+			GameEnums.TeamSide.PLAYER
+		))
 		occupied_coords.append(master_coord)
 		total_power += _estimate_unit_power(master_data, true, player_state.slot_index, round_number)
 
-	var unit_candidates: Array[UnitData] = _load_sorted_unit_candidates(deck_data, player_state.slot_index, round_number)
+	var unit_candidates: Array[Dictionary] = _load_sorted_unit_candidates(deck_data, player_state.slot_index, round_number)
 	var non_master_count: int = 0
-	for unit_data in unit_candidates:
+	for candidate in unit_candidates:
+		var unit_data: UnitData = candidate.get("unit_data", null)
+		var unit_path: String = str(candidate.get("unit_path", ""))
 		if unit_data == null:
 			continue
 		if non_master_count >= field_limit:
 			break
-		if unit_data.cost > remaining_energy:
+		if unit_data.cost > remaining_gold:
 			continue
 
 		var target_coord: Vector2i = _choose_snapshot_coord(
@@ -222,27 +1041,122 @@ func _build_background_board_snapshot(player_state: MatchPlayerState, round_numb
 		if not _is_valid_snapshot_coord(target_coord):
 			continue
 
-		units.append(_build_snapshot_unit_entry(unit_data, target_coord, false))
+		units.append(_build_snapshot_unit_entry(
+			unit_data,
+			unit_path,
+			target_coord,
+			false,
+			GameEnums.TeamSide.PLAYER
+		))
 		occupied_coords.append(target_coord)
-		remaining_energy -= unit_data.cost
+		remaining_gold -= unit_data.cost
 		non_master_count += 1
 		total_power += _estimate_unit_power(unit_data, false, player_state.slot_index, round_number)
 
+	_apply_background_deck_passives(units)
 	return {
 		"player_id": player_state.player_id,
 		"player_name": player_state.display_name,
-		"round_number": round_number,
-		"phase": "PREPARACAO",
-		"life": player_state.current_life,
-		"energy": available_energy,
-		"energy_budget": effective_energy,
+		"gold": available_gold,
+		"gold_budget": effective_gold,
 		"units": units,
 		"unit_count": units.size(),
 		"non_master_count": non_master_count,
 		"power_rating": total_power,
 		"master_name": str(units[0].get("display_name", "Mestre")) if not units.is_empty() else "Mestre",
+	}
+
+func _apply_background_deck_passives(units: Array[Dictionary]) -> void:
+	var thrax_master_coord: Vector2i = Vector2i(-1, -1)
+	for unit_entry in units:
+		if str(unit_entry.get("unit_id", "")) == "thrax_master":
+			thrax_master_coord = unit_entry.get("coord", Vector2i(-1, -1))
+			break
+	if thrax_master_coord == Vector2i(-1, -1):
+		return
+
+	for unit_entry in units:
+		if bool(unit_entry.get("is_master", false)):
+			continue
+		var coord: Vector2i = unit_entry.get("coord", Vector2i(-1, -1))
+		var distance: int = abs(coord.x - thrax_master_coord.x) + abs(coord.y - thrax_master_coord.y)
+		if distance != 1:
+			continue
+		var base_attack: int = int(unit_entry.get("physical_attack", 0))
+		unit_entry["physical_attack"] = base_attack + int(ceil(float(base_attack) * 0.30))
+
+func _apply_round_reward_cards(winner_state: MatchPlayerState, loser_state: MatchPlayerState, damage: int) -> void:
+	if winner_state == null:
+		return
+
+	var bonus_gold: int = 0
+	var tribute_amount: int = 0
+	for card_path in winner_state.get_owned_card_paths():
+		var card_data: CardData = _load_card_data(card_path)
+		if card_data == null:
+			continue
+		match card_data.support_effect_type:
+			GameEnums.SupportCardEffectType.CONDITIONAL_NEXT_ROUND_GOLD:
+				bonus_gold = maxi(bonus_gold, card_data.bonus_next_round_gold)
+			GameEnums.SupportCardEffectType.CONDITIONAL_TRIBUTE_STEAL:
+				tribute_amount = maxi(tribute_amount, card_data.tribute_steal_amount)
+
+	if bonus_gold > 0:
+		winner_state.banked_gold += bonus_gold
+
+	if tribute_amount > 0 and damage > 0 and loser_state != null and loser_state.banked_gold > 0:
+		var stolen: int = mini(loser_state.banked_gold, tribute_amount)
+		loser_state.banked_gold -= stolen
+		winner_state.banked_gold += stolen
+
+func _build_table_snapshot(
+	viewer_state: MatchPlayerState,
+	opponent_state: MatchPlayerState,
+	viewer_lineup: Dictionary,
+	opponent_lineup: Dictionary,
+	round_number: int,
+	phase_name: String,
+	result_text: String,
+	card_summary: String = "",
+	recent_events: Array[Dictionary] = []
+) -> Dictionary:
+	var units: Array[Dictionary] = []
+	var viewer_units: Array = viewer_lineup.get("units", [])
+	for unit_variant in viewer_units:
+		var unit_entry: Dictionary = unit_variant
+		units.append(unit_entry.duplicate(true))
+
+	var opponent_units: Array = opponent_lineup.get("units", [])
+	for unit_variant in opponent_units:
+		var unit_entry: Dictionary = unit_variant
+		units.append(_clone_unit_entry_for_view(unit_entry, GameEnums.TeamSide.ENEMY, true))
+
+	return {
+		"player_id": viewer_state.player_id if viewer_state != null else "",
+		"player_name": viewer_state.display_name if viewer_state != null else "Jogador",
+		"opponent_id": opponent_state.player_id if opponent_state != null else "",
+		"opponent_name": opponent_state.display_name if opponent_state != null else "Sem oponente",
+		"round_number": round_number,
+		"phase": phase_name,
+		"life": viewer_state.current_life if viewer_state != null else 0,
+		"gold": int(viewer_lineup.get("gold", 0)),
+		"gold_budget": int(viewer_lineup.get("gold_budget", 0)),
+		"units": units,
+		"unit_count": units.size(),
+		"non_master_count": int(viewer_lineup.get("non_master_count", 0)),
+		"enemy_unit_count": int(opponent_lineup.get("unit_count", 0)),
+		"power_rating": int(viewer_lineup.get("power_rating", 0)),
+		"master_name": str(viewer_lineup.get("master_name", "Sem mestre")),
+		"opponent_master_name": str(opponent_lineup.get("master_name", "Sem mestre")),
+		"owned_card_count": viewer_state.get_owned_card_paths().size() if viewer_state != null else 0,
+		"owned_card_names": _card_names_from_paths(viewer_state.get_owned_card_paths()) if viewer_state != null else [],
+		"table_id": viewer_state.current_table_id if viewer_state != null else "",
+		"streak": viewer_state.streak_value if viewer_state != null else 0,
+		"player_level": viewer_state.player_level if viewer_state != null else 1,
+		"card_summary": card_summary,
+		"recent_events": recent_events,
 		"summary": _build_snapshot_summary(units),
-		"result_text": "",
+		"result_text": result_text,
 	}
 
 func _build_empty_snapshot(player_state: MatchPlayerState, round_number: int, phase_name: String) -> Dictionary:
@@ -252,16 +1166,27 @@ func _build_empty_snapshot(player_state: MatchPlayerState, round_number: int, ph
 	return {
 		"player_id": player_id,
 		"player_name": player_name,
+		"opponent_id": "",
+		"opponent_name": "Sem oponente",
 		"round_number": round_number,
 		"phase": phase_name,
 		"life": life_value,
-		"energy": 0,
-		"energy_budget": 0,
+		"gold": 0,
+		"gold_budget": 0,
 		"units": [],
 		"unit_count": 0,
 		"non_master_count": 0,
+		"enemy_unit_count": 0,
 		"power_rating": 0,
 		"master_name": "Sem mestre",
+		"opponent_master_name": "Sem mestre",
+		"owned_card_count": 0,
+		"owned_card_names": [],
+		"table_id": player_state.current_table_id if player_state != null else "",
+		"streak": player_state.streak_value if player_state != null else 0,
+		"player_level": player_state.player_level if player_state != null else 1,
+		"card_summary": "",
+		"recent_events": [],
 		"summary": "Sem unidades em campo.",
 		"result_text": "",
 	}
@@ -272,51 +1197,84 @@ func _build_eliminated_snapshot(player_state: MatchPlayerState, round_number: in
 	snapshot["result_text"] = "KO"
 	return snapshot
 
-func _build_snapshot_unit_entry(unit_data: UnitData, coord: Vector2i, is_master: bool) -> Dictionary:
+func _build_snapshot_unit_entry(
+	unit_data: UnitData,
+	unit_path: String,
+	coord: Vector2i,
+	is_master: bool,
+	team_side: int
+) -> Dictionary:
 	return {
 		"unit_id": unit_data.id,
+		"unit_path": unit_path,
 		"display_name": unit_data.display_name,
 		"coord": coord,
+		"team_side": team_side,
 		"is_master": is_master,
 		"class_label": _resolve_unit_class_label(unit_data),
 		"race_name": _race_name(unit_data.race),
 		"cost": unit_data.cost,
+		"current_hp": unit_data.max_hp,
+		"max_hp": unit_data.max_hp,
+		"current_mana": 0,
+		"mana_max": unit_data.mana_max,
+		"physical_attack": unit_data.physical_attack,
+		"magic_attack": unit_data.magic_attack,
+		"physical_defense": unit_data.physical_defense,
+		"magic_defense": unit_data.magic_defense,
+		"attack_range": unit_data.attack_range,
+		"crit_chance": unit_data.crit_chance,
+		"mana_gain_on_attack": unit_data.mana_gain_on_attack,
+		"mana_gain_on_hit": unit_data.mana_gain_on_hit,
 	}
 
-func _load_sorted_unit_candidates(deck_data: DeckData, player_seed: int, round_number: int) -> Array[UnitData]:
-	var units: Array[UnitData] = []
+func _clone_unit_entry_for_view(unit_entry: Dictionary, relative_team_side: int, mirror_coord: bool) -> Dictionary:
+	var cloned_entry: Dictionary = unit_entry.duplicate(true)
+	if mirror_coord:
+		var source_coord: Vector2i = unit_entry.get("coord", Vector2i(-1, -1))
+		cloned_entry["coord"] = _mirror_coord_for_opponent_view(source_coord)
+	cloned_entry["team_side"] = relative_team_side
+	return cloned_entry
+
+func _load_sorted_unit_candidates(deck_data: DeckData, player_seed: int, round_number: int) -> Array[Dictionary]:
+	var units: Array[Dictionary] = []
 	if deck_data == null:
 		return units
 
-	for unit_path in deck_data.unit_paths:
+	for unit_path in deck_data.unit_pool_paths:
 		var unit_data: UnitData = _load_unit_data(unit_path)
 		if unit_data != null:
-			units.append(unit_data)
+			units.append({
+				"unit_data": unit_data,
+				"unit_path": unit_path,
+			})
 
 	units.sort_custom(_sort_unit_candidates.bind(player_seed, round_number))
 	return units
 
-func _sort_unit_candidates(a: UnitData, b: UnitData, player_seed: int, round_number: int) -> bool:
-	if a == null:
+func _sort_unit_candidates(a: Dictionary, b: Dictionary, player_seed: int, round_number: int) -> bool:
+	var unit_a: UnitData = a.get("unit_data", null)
+	var unit_b: UnitData = b.get("unit_data", null)
+	if unit_a == null:
 		return false
-	if b == null:
+	if unit_b == null:
 		return true
 
-	var priority_a: int = _unit_priority(a.class_type, round_number)
-	var priority_b: int = _unit_priority(b.class_type, round_number)
+	var priority_a: int = _unit_priority(unit_a.class_type, round_number)
+	var priority_b: int = _unit_priority(unit_b.class_type, round_number)
 	if priority_a != priority_b:
 		return priority_a < priority_b
 
-	if round_number <= 2 and a.cost != b.cost:
-		return a.cost < b.cost
-	if a.cost != b.cost:
-		return a.cost > b.cost
+	if round_number <= 2 and unit_a.cost != unit_b.cost:
+		return unit_a.cost < unit_b.cost
+	if unit_a.cost != unit_b.cost:
+		return unit_a.cost > unit_b.cost
 
-	var bias_a: int = _unit_sort_bias(a.id, player_seed, round_number)
-	var bias_b: int = _unit_sort_bias(b.id, player_seed, round_number)
+	var bias_a: int = _unit_sort_bias(unit_a.id, player_seed, round_number)
+	var bias_b: int = _unit_sort_bias(unit_b.id, player_seed, round_number)
 	if bias_a != bias_b:
 		return bias_a < bias_b
-	return a.display_name < b.display_name
+	return unit_a.display_name < unit_b.display_name
 
 func _unit_priority(class_type: int, round_number: int) -> int:
 	if round_number <= 2:
@@ -424,91 +1382,470 @@ func _build_snapshot_summary(units: Array[Dictionary]) -> String:
 	for unit_entry in units:
 		var display_name: String = str(unit_entry.get("display_name", "Unidade"))
 		var coord: Vector2i = unit_entry.get("coord", Vector2i(-1, -1))
-		summary_units.append("%s @ %s" % [display_name, coord])
+		var team_marker: String = "JOG" if int(unit_entry.get("team_side", GameEnums.TeamSide.PLAYER)) == GameEnums.TeamSide.PLAYER else "INV"
+		summary_units.append("%s [%s] @ %s" % [display_name, team_marker, coord])
 	return _join_strings(summary_units)
 
 func _resolve_background_match(
 	player_a: MatchPlayerState,
 	player_b: MatchPlayerState,
 	snapshot_a: Dictionary,
-	snapshot_b: Dictionary,
 	round_number: int
 ) -> Dictionary:
-	var power_a: int = int(snapshot_a.get("power_rating", 0)) + _player_round_bias(player_a, round_number)
-	var power_b: int = int(snapshot_b.get("power_rating", 0)) + _player_round_bias(player_b, round_number)
-	var unit_count_a: int = int(snapshot_a.get("non_master_count", 0))
-	var unit_count_b: int = int(snapshot_b.get("non_master_count", 0))
-	var power_diff: int = power_a - power_b
+	var sim_units: Array[Dictionary] = _build_background_sim_units(snapshot_a)
+	var acting_team: int = GameEnums.TeamSide.PLAYER if ((player_a.slot_index + player_b.slot_index + round_number) % 2 == 0) else GameEnums.TeamSide.ENEMY
+	var actions_taken: int = 0
 
-	if abs(power_diff) <= 18 and abs(unit_count_a - unit_count_b) <= 1:
-		return {
-			"winner_id": "",
-			"loser_id": "",
-			"damage": 0,
-			"winner_survivors": -1,
-			"loser_survivors": -1,
-			"result_text": "Empate em segundo plano contra %s" % player_b.display_name,
-			"loser_text": "Empate em segundo plano contra %s" % player_a.display_name,
-		}
+	while actions_taken < BACKGROUND_COMBAT_MAX_ACTIONS:
+		if not _background_team_alive(sim_units, GameEnums.TeamSide.PLAYER):
+			break
+		if not _background_team_alive(sim_units, GameEnums.TeamSide.ENEMY):
+			break
 
-	var winner_state: MatchPlayerState = player_a if power_diff >= 0 else player_b
-	var loser_state: MatchPlayerState = player_b if power_diff >= 0 else player_a
-	var winner_snapshot: Dictionary = snapshot_a if power_diff >= 0 else snapshot_b
-	var loser_snapshot: Dictionary = snapshot_b if power_diff >= 0 else snapshot_a
-	var winner_units: int = maxi(1, int(winner_snapshot.get("non_master_count", 0)))
-	var loser_units: int = maxi(1, int(loser_snapshot.get("non_master_count", 0)))
-	var survivor_count: int = clampi(1 + int(floor(float(abs(power_diff)) / 55.0)), 1, winner_units)
-	var loser_survivors: int = clampi(loser_units - survivor_count, 0, loser_units)
+		var team_order: Array[int] = [acting_team, _opposite_team(acting_team)]
+		for team_side in team_order:
+			var turn_order: Array[Dictionary] = _background_team_turn_order(sim_units, team_side)
+			for unit_entry in turn_order:
+				if not bool(unit_entry.get("alive", false)):
+					continue
+				if not _background_team_alive(sim_units, _opposite_team(team_side)):
+					break
+				_background_take_action(unit_entry, sim_units)
+				actions_taken += 1
+				if actions_taken >= BACKGROUND_COMBAT_MAX_ACTIONS:
+					break
+			if actions_taken >= BACKGROUND_COMBAT_MAX_ACTIONS:
+				break
+
+		acting_team = _opposite_team(acting_team)
+
+	var winner_team: int = _background_winner_team(sim_units)
+	var winner_id: String = ""
+	var loser_id: String = ""
+	var damage: int = 0
+	var winner_survivors: int = -1
+	var loser_survivors: int = -1
+	var player_a_result_text: String = "Empate em segundo plano contra %s" % player_b.display_name
+	var player_b_result_text: String = "Empate em segundo plano contra %s" % player_a.display_name
+
+	if winner_team >= 0:
+		winner_id = player_a.player_id if winner_team == GameEnums.TeamSide.PLAYER else player_b.player_id
+		loser_id = player_b.player_id if winner_team == GameEnums.TeamSide.PLAYER else player_a.player_id
+		winner_survivors = _count_background_survivors(sim_units, winner_team)
+		loser_survivors = _count_background_survivors(sim_units, _opposite_team(winner_team))
+		damage = clampi(maxi(1, winner_survivors), 1, 8)
+
+		if winner_team == GameEnums.TeamSide.PLAYER:
+			player_a_result_text = "%s venceu %s em segundo plano e causou %d de dano" % [
+				player_a.display_name,
+				player_b.display_name,
+				damage,
+			]
+			player_b_result_text = "%s perdeu para %s em segundo plano e sofreu %d de dano" % [
+				player_b.display_name,
+				player_a.display_name,
+				damage,
+			]
+		else:
+			player_a_result_text = "%s perdeu para %s em segundo plano e sofreu %d de dano" % [
+				player_a.display_name,
+				player_b.display_name,
+				damage,
+			]
+			player_b_result_text = "%s venceu %s em segundo plano e causou %d de dano" % [
+				player_b.display_name,
+				player_a.display_name,
+				damage,
+			]
 
 	return {
-		"winner_id": winner_state.player_id,
-		"loser_id": loser_state.player_id,
-		"damage": survivor_count,
-		"winner_survivors": survivor_count,
+		"winner_id": winner_id,
+		"loser_id": loser_id,
+		"damage": damage,
+		"winner_survivors": winner_survivors,
 		"loser_survivors": loser_survivors,
-		"result_text": "%s venceu %s em segundo plano e causou %d de dano" % [
-			winner_state.display_name,
-			loser_state.display_name,
-			survivor_count,
-		],
-		"loser_text": "%s perdeu para %s em segundo plano e sofreu %d de dano" % [
-			loser_state.display_name,
-			winner_state.display_name,
-			survivor_count,
-		],
+		"player_a_result_text": player_a_result_text,
+		"player_b_result_text": player_b_result_text,
+		"result_text": player_a_result_text,
+		"snapshot_a": _build_snapshot_from_sim_units(player_a, player_b, sim_units, GameEnums.TeamSide.PLAYER, round_number, "RESULTADO", player_a_result_text),
+		"snapshot_b": _build_snapshot_from_sim_units(player_b, player_a, sim_units, GameEnums.TeamSide.ENEMY, round_number, "RESULTADO", player_b_result_text),
 	}
 
-func _decorate_snapshot_with_result(
-	player_state: MatchPlayerState,
-	source_snapshot: Dictionary,
+func _build_background_sim_units(snapshot: Dictionary) -> Array[Dictionary]:
+	var sim_units: Array[Dictionary] = []
+	var source_units: Array = snapshot.get("units", [])
+	for unit_variant in source_units:
+		var unit_entry: Dictionary = unit_variant
+		sim_units.append({
+			"unit_id": str(unit_entry.get("unit_id", "")),
+			"unit_path": str(unit_entry.get("unit_path", "")),
+			"display_name": str(unit_entry.get("display_name", "Unidade")),
+			"coord": unit_entry.get("coord", Vector2i(-1, -1)),
+			"team_side": int(unit_entry.get("team_side", GameEnums.TeamSide.PLAYER)),
+			"is_master": bool(unit_entry.get("is_master", false)),
+			"class_label": str(unit_entry.get("class_label", "Classe")),
+			"race_name": str(unit_entry.get("race_name", "Raca")),
+			"cost": int(unit_entry.get("cost", 0)),
+			"current_hp": int(unit_entry.get("current_hp", 0)),
+			"max_hp": int(unit_entry.get("max_hp", 0)),
+			"current_mana": int(unit_entry.get("current_mana", 0)),
+			"mana_max": int(unit_entry.get("mana_max", 0)),
+			"physical_attack": int(unit_entry.get("physical_attack", 0)),
+			"magic_attack": int(unit_entry.get("magic_attack", 0)),
+			"physical_defense": int(unit_entry.get("physical_defense", 0)),
+			"magic_defense": int(unit_entry.get("magic_defense", 0)),
+			"attack_range": int(unit_entry.get("attack_range", 1)),
+			"crit_chance": float(unit_entry.get("crit_chance", 0.0)),
+			"alive": int(unit_entry.get("current_hp", 0)) > 0,
+			"last_coord": Vector2i(-1, -1),
+			"skip_turns_remaining": 0,
+			"initiative_bonus": 0,
+		})
+	return sim_units
+
+func _build_snapshot_from_sim_units(
+	viewer_state: MatchPlayerState,
+	opponent_state: MatchPlayerState,
+	sim_units: Array[Dictionary],
+	viewer_team_side: int,
+	round_number: int,
 	phase_name: String,
 	result_text: String,
-	keep_non_master_count: int
+	card_summary: String = "",
+	recent_events: Array[Dictionary] = []
 ) -> Dictionary:
-	var snapshot: Dictionary = source_snapshot.duplicate(true)
-	snapshot["phase"] = phase_name
-	snapshot["life"] = player_state.current_life if player_state != null else int(snapshot.get("life", 0))
-	snapshot["result_text"] = result_text
+	var units: Array[Dictionary] = []
+	var total_power: int = _estimate_owned_cards_power_bonus(viewer_state.get_owned_card_paths()) if viewer_state != null else 0
+	var non_master_count: int = 0
+	var enemy_unit_count: int = 0
+	var master_name: String = "Sem mestre"
+	var opponent_master_name: String = "Sem mestre"
 
-	if keep_non_master_count >= 0:
-		var units: Array[Dictionary] = []
-		var source_units: Array = snapshot.get("units", [])
-		var kept_non_master: int = 0
-		for unit_variant in source_units:
-			var unit_entry: Dictionary = unit_variant
-			if bool(unit_entry.get("is_master", false)):
-				units.append(unit_entry)
-				continue
-			if kept_non_master >= keep_non_master_count:
-				continue
-			units.append(unit_entry)
-			kept_non_master += 1
-		snapshot["units"] = units
-		snapshot["unit_count"] = units.size()
-		snapshot["non_master_count"] = kept_non_master
-		snapshot["summary"] = _build_snapshot_summary(units)
+	for sim_unit in sim_units:
+		if not bool(sim_unit.get("alive", false)):
+			continue
 
-	return snapshot
+		var absolute_team: int = int(sim_unit.get("team_side", GameEnums.TeamSide.PLAYER))
+		var relative_team: int = GameEnums.TeamSide.PLAYER if absolute_team == viewer_team_side else GameEnums.TeamSide.ENEMY
+		var coord: Vector2i = sim_unit.get("coord", Vector2i(-1, -1))
+		if viewer_team_side == GameEnums.TeamSide.ENEMY:
+			coord = _mirror_coord_for_opponent_view(coord)
+
+		var unit_entry: Dictionary = {
+			"unit_id": str(sim_unit.get("unit_id", "")),
+			"unit_path": str(sim_unit.get("unit_path", "")),
+			"display_name": str(sim_unit.get("display_name", "Unidade")),
+			"coord": coord,
+			"team_side": relative_team,
+			"is_master": bool(sim_unit.get("is_master", false)),
+			"class_label": str(sim_unit.get("class_label", "Classe")),
+			"race_name": str(sim_unit.get("race_name", "Raca")),
+			"cost": int(sim_unit.get("cost", 0)),
+			"current_hp": int(sim_unit.get("current_hp", 0)),
+			"max_hp": int(sim_unit.get("max_hp", 0)),
+			"current_mana": int(sim_unit.get("current_mana", 0)),
+			"mana_max": int(sim_unit.get("mana_max", 0)),
+			"physical_attack": int(sim_unit.get("physical_attack", 0)),
+			"magic_attack": int(sim_unit.get("magic_attack", 0)),
+			"physical_defense": int(sim_unit.get("physical_defense", 0)),
+			"magic_defense": int(sim_unit.get("magic_defense", 0)),
+			"attack_range": int(sim_unit.get("attack_range", 1)),
+			"crit_chance": float(sim_unit.get("crit_chance", 0.0)),
+			"mana_gain_on_attack": 0,
+			"mana_gain_on_hit": 0,
+		}
+		if relative_team == GameEnums.TeamSide.PLAYER and bool(unit_entry.get("is_master", false)):
+			master_name = str(unit_entry.get("display_name", "Mestre"))
+		elif relative_team == GameEnums.TeamSide.ENEMY and bool(unit_entry.get("is_master", false)):
+			opponent_master_name = str(unit_entry.get("display_name", "Mestre"))
+		elif relative_team == GameEnums.TeamSide.PLAYER:
+			non_master_count += 1
+		else:
+			enemy_unit_count += 1
+
+		units.append(unit_entry)
+		total_power += _estimate_snapshot_entry_power(unit_entry)
+
+	return {
+		"player_id": viewer_state.player_id if viewer_state != null else "",
+		"player_name": viewer_state.display_name if viewer_state != null else "Jogador",
+		"opponent_id": opponent_state.player_id if opponent_state != null else "",
+		"opponent_name": opponent_state.display_name if opponent_state != null else "Sem oponente",
+		"round_number": round_number,
+		"phase": phase_name,
+		"life": viewer_state.current_life if viewer_state != null else 0,
+		"gold": BattleConfig.STARTING_GOLD + ((round_number - 1) * BattleConfig.GOLD_PER_ROUND),
+		"gold_budget": BattleConfig.STARTING_GOLD + ((round_number - 1) * BattleConfig.GOLD_PER_ROUND),
+		"units": units,
+		"unit_count": units.size(),
+		"non_master_count": non_master_count,
+		"enemy_unit_count": enemy_unit_count,
+		"power_rating": total_power,
+		"master_name": master_name,
+		"opponent_master_name": opponent_master_name,
+		"owned_card_count": viewer_state.get_owned_card_paths().size() if viewer_state != null else 0,
+		"owned_card_names": _card_names_from_paths(viewer_state.get_owned_card_paths()) if viewer_state != null else [],
+		"table_id": viewer_state.current_table_id if viewer_state != null else "",
+		"streak": viewer_state.streak_value if viewer_state != null else 0,
+		"player_level": viewer_state.player_level if viewer_state != null else 1,
+		"card_summary": card_summary,
+		"recent_events": recent_events,
+		"summary": _build_snapshot_summary(units),
+		"result_text": result_text,
+	}
+
+func _background_take_action(unit_entry: Dictionary, sim_units: Array[Dictionary]) -> void:
+	if int(unit_entry.get("skip_turns_remaining", 0)) > 0:
+		unit_entry["skip_turns_remaining"] = maxi(0, int(unit_entry.get("skip_turns_remaining", 0)) - 1)
+		return
+	var target: Dictionary = _find_background_target(unit_entry, sim_units)
+	if target.is_empty():
+		return
+	if _background_in_range(unit_entry, target):
+		_background_attack(unit_entry, target)
+		return
+	_background_move(unit_entry, target, sim_units)
+
+func _background_team_turn_order(sim_units: Array[Dictionary], team_side: int) -> Array[Dictionary]:
+	var turn_order: Array[Dictionary] = []
+	for unit_entry in sim_units:
+		if not bool(unit_entry.get("alive", false)):
+			continue
+		if int(unit_entry.get("team_side", GameEnums.TeamSide.PLAYER)) != team_side:
+			continue
+		turn_order.append(unit_entry)
+	turn_order.sort_custom(_sort_background_turn_order)
+	return turn_order
+
+func _sort_background_turn_order(a: Dictionary, b: Dictionary) -> bool:
+	var initiative_a: int = _background_unit_initiative(a)
+	var initiative_b: int = _background_unit_initiative(b)
+	if initiative_a != initiative_b:
+		return initiative_a > initiative_b
+	var hp_a: int = int(a.get("current_hp", 0))
+	var hp_b: int = int(b.get("current_hp", 0))
+	if hp_a != hp_b:
+		return hp_a > hp_b
+	return str(a.get("display_name", "")) < str(b.get("display_name", ""))
+
+func _background_unit_initiative(unit_entry: Dictionary) -> int:
+	var initiative: int = 0
+	initiative += int(unit_entry.get("attack_range", 1)) * 10
+	initiative += int(unit_entry.get("physical_attack", 0))
+	initiative += int(unit_entry.get("magic_attack", 0))
+	initiative += int(unit_entry.get("cost", 0)) * 3
+	initiative += int(unit_entry.get("initiative_bonus", 0))
+	if bool(unit_entry.get("is_master", false)):
+		initiative -= 6
+	return initiative
+
+func _find_background_target(unit_entry: Dictionary, sim_units: Array[Dictionary]) -> Dictionary:
+	var best_target: Dictionary = {}
+	var best_score: int = 1000000
+	var source_coord: Vector2i = unit_entry.get("coord", Vector2i(-1, -1))
+	var source_team: int = int(unit_entry.get("team_side", GameEnums.TeamSide.PLAYER))
+
+	for candidate in sim_units:
+		if not bool(candidate.get("alive", false)):
+			continue
+		if int(candidate.get("team_side", GameEnums.TeamSide.PLAYER)) == source_team:
+			continue
+
+		var candidate_coord: Vector2i = candidate.get("coord", Vector2i(-1, -1))
+		var score: int = _background_distance(source_coord, candidate_coord) * 100
+		score += int(candidate.get("current_hp", 0)) * 4
+		score += int(candidate.get("physical_defense", 0)) * 6
+		score += int(candidate.get("magic_defense", 0)) * 4
+		if bool(candidate.get("is_master", false)):
+			score -= 12
+		if best_target.is_empty() or score < best_score:
+			best_target = candidate
+			best_score = score
+
+	return best_target
+
+func _background_in_range(unit_entry: Dictionary, target: Dictionary) -> bool:
+	return _background_distance(
+		unit_entry.get("coord", Vector2i(-1, -1)),
+		target.get("coord", Vector2i(-1, -1))
+	) <= int(unit_entry.get("attack_range", 1))
+
+func _background_attack(attacker: Dictionary, target: Dictionary) -> void:
+	var physical_attack: int = int(attacker.get("physical_attack", 0))
+	var magic_attack: int = int(attacker.get("magic_attack", 0))
+	var expected_crit_bonus: int = int(round(float(physical_attack + magic_attack) * float(attacker.get("crit_chance", 0.0)) * 0.35))
+	var physical_damage: int = maxi(0, physical_attack - int(target.get("physical_defense", 0)))
+	var magic_damage: int = maxi(0, magic_attack - int(target.get("magic_defense", 0)))
+	var total_damage: int = physical_damage + magic_damage + expected_crit_bonus
+	if total_damage <= 0:
+		total_damage = 1
+
+	var next_hp: int = maxi(0, int(target.get("current_hp", 0)) - total_damage)
+	target["current_hp"] = next_hp
+	target["alive"] = next_hp > 0
+
+func _background_move(unit_entry: Dictionary, target: Dictionary, sim_units: Array[Dictionary]) -> void:
+	var current_coord: Vector2i = unit_entry.get("coord", Vector2i(-1, -1))
+	var target_coord: Vector2i = target.get("coord", Vector2i(-1, -1))
+	var occupied: Dictionary = {}
+	for other_unit in sim_units:
+		if not bool(other_unit.get("alive", false)):
+			continue
+		if other_unit == unit_entry:
+			continue
+		occupied[_coord_key(other_unit.get("coord", Vector2i(-1, -1)))] = true
+
+	var next_coord: Vector2i = _resolve_background_step(unit_entry, current_coord, target_coord, occupied)
+	if next_coord == current_coord:
+		return
+	unit_entry["last_coord"] = current_coord
+	unit_entry["coord"] = next_coord
+
+func _resolve_background_step(
+	unit_entry: Dictionary,
+	current_coord: Vector2i,
+	target_coord: Vector2i,
+	occupied: Dictionary
+) -> Vector2i:
+	var current_distance: int = _background_distance(current_coord, target_coord)
+	var previous_coord: Vector2i = unit_entry.get("last_coord", Vector2i(-1, -1))
+	var best_advance: Vector2i = Vector2i(-1, -1)
+	var best_side: Vector2i = Vector2i(-1, -1)
+	var best_fallback: Vector2i = Vector2i(-1, -1)
+	var best_advance_score: int = 1000000
+	var best_side_score: int = 1000000
+	var best_fallback_score: int = 1000000
+
+	for candidate in _background_adjacent_coords(current_coord):
+		if not _is_valid_snapshot_coord(candidate):
+			continue
+		if occupied.has(_coord_key(candidate)):
+			continue
+
+		var candidate_distance: int = _background_distance(candidate, target_coord)
+		var candidate_score: int = _background_move_score(
+			candidate,
+			current_coord,
+			target_coord,
+			int(unit_entry.get("team_side", GameEnums.TeamSide.PLAYER))
+		)
+		if candidate == previous_coord:
+			candidate_score += 250
+
+		if candidate_distance < current_distance:
+			if candidate_score < best_advance_score:
+				best_advance_score = candidate_score
+				best_advance = candidate
+		elif candidate_distance == current_distance:
+			if candidate_score < best_side_score:
+				best_side_score = candidate_score
+				best_side = candidate
+		else:
+			if candidate_score < best_fallback_score:
+				best_fallback_score = candidate_score
+				best_fallback = candidate
+
+	if _is_valid_snapshot_coord(best_advance):
+		return best_advance
+	if _is_valid_snapshot_coord(best_side):
+		return best_side
+	if _is_valid_snapshot_coord(best_fallback):
+		return best_fallback
+	return current_coord
+
+func _background_adjacent_coords(coord: Vector2i) -> Array[Vector2i]:
+	return [
+		Vector2i(coord.x + 1, coord.y),
+		Vector2i(coord.x - 1, coord.y),
+		Vector2i(coord.x, coord.y + 1),
+		Vector2i(coord.x, coord.y - 1),
+	]
+
+func _background_move_score(candidate: Vector2i, from_coord: Vector2i, target_coord: Vector2i, team_side: int) -> int:
+	var target_distance: int = _background_distance(candidate, target_coord)
+	var horizontal_delta: int = abs(candidate.x - target_coord.x)
+	var forward_progress: int = from_coord.y - candidate.y if team_side == GameEnums.TeamSide.PLAYER else candidate.y - from_coord.y
+	var backward_progress: int = candidate.y - from_coord.y if team_side == GameEnums.TeamSide.PLAYER else from_coord.y - candidate.y
+	return (
+		target_distance * 100
+		+ maxi(0, backward_progress) * 12
+		+ horizontal_delta * 5
+		- maxi(0, forward_progress)
+	)
+
+func _background_team_alive(sim_units: Array[Dictionary], team_side: int) -> bool:
+	for unit_entry in sim_units:
+		if not bool(unit_entry.get("alive", false)):
+			continue
+		if int(unit_entry.get("team_side", GameEnums.TeamSide.PLAYER)) == team_side:
+			return true
+	return false
+
+func _count_background_survivors(sim_units: Array[Dictionary], team_side: int) -> int:
+	var count: int = 0
+	for unit_entry in sim_units:
+		if not bool(unit_entry.get("alive", false)):
+			continue
+		if int(unit_entry.get("team_side", GameEnums.TeamSide.PLAYER)) != team_side:
+			continue
+		count += 1
+	return count
+
+func _background_winner_team(sim_units: Array[Dictionary]) -> int:
+	var player_alive: bool = _background_team_alive(sim_units, GameEnums.TeamSide.PLAYER)
+	var enemy_alive: bool = _background_team_alive(sim_units, GameEnums.TeamSide.ENEMY)
+	if player_alive and not enemy_alive:
+		return GameEnums.TeamSide.PLAYER
+	if enemy_alive and not player_alive:
+		return GameEnums.TeamSide.ENEMY
+
+	var player_score: int = _background_team_score(sim_units, GameEnums.TeamSide.PLAYER)
+	var enemy_score: int = _background_team_score(sim_units, GameEnums.TeamSide.ENEMY)
+	if player_score == enemy_score:
+		return -1
+	return GameEnums.TeamSide.PLAYER if player_score > enemy_score else GameEnums.TeamSide.ENEMY
+
+func _background_team_score(sim_units: Array[Dictionary], team_side: int) -> int:
+	var score: int = 0
+	for unit_entry in sim_units:
+		if not bool(unit_entry.get("alive", false)):
+			continue
+		if int(unit_entry.get("team_side", GameEnums.TeamSide.PLAYER)) != team_side:
+			continue
+		score += int(unit_entry.get("current_hp", 0)) * 3
+		score += int(unit_entry.get("physical_attack", 0)) * 2
+		score += int(unit_entry.get("magic_attack", 0)) * 2
+		score += int(unit_entry.get("physical_defense", 0)) * 2
+		score += int(unit_entry.get("magic_defense", 0)) * 2
+		if bool(unit_entry.get("is_master", false)):
+			score += 18
+	return score
+
+func _estimate_snapshot_entry_power(unit_entry: Dictionary) -> int:
+	var power: int = 0
+	power += int(unit_entry.get("current_hp", 0)) * 2
+	power += int(unit_entry.get("physical_attack", 0)) * 5
+	power += int(unit_entry.get("magic_attack", 0)) * 5
+	power += int(unit_entry.get("physical_defense", 0)) * 4
+	power += int(unit_entry.get("magic_defense", 0)) * 4
+	power += int(unit_entry.get("attack_range", 1)) * 3
+	power += int(round(float(unit_entry.get("crit_chance", 0.0)) * 100.0))
+	power += int(unit_entry.get("cost", 0)) * 12
+	if bool(unit_entry.get("is_master", false)):
+		power += 45
+	return maxi(1, power)
+
+func _background_distance(a: Vector2i, b: Vector2i) -> int:
+	return abs(a.x - b.x) + abs(a.y - b.y)
+
+func _coord_key(coord: Vector2i) -> String:
+	return "%d:%d" % [coord.x, coord.y]
+
+func _mirror_coord_for_opponent_view(coord: Vector2i) -> Vector2i:
+	return Vector2i(coord.x, BattleConfig.BOARD_HEIGHT - 1 - coord.y)
+
+func _opposite_team(team_side: int) -> int:
+	return GameEnums.TeamSide.ENEMY if team_side == GameEnums.TeamSide.PLAYER else GameEnums.TeamSide.PLAYER
 
 func _player_round_bias(player_state: MatchPlayerState, round_number: int) -> int:
 	if player_state == null:
@@ -524,14 +1861,109 @@ func _effective_field_limit(field_limit: int, round_number: int) -> int:
 		return mini(field_limit, 3)
 	return field_limit
 
-func _effective_energy_budget(available_energy: int, round_number: int) -> int:
+func _effective_gold_budget(available_gold: int, round_number: int) -> int:
 	if round_number <= 1:
-		return mini(available_energy, 2)
+		return mini(available_gold, 2)
 	if round_number == 2:
-		return mini(available_energy, 3)
+		return mini(available_gold, 3)
 	if round_number == 3:
-		return mini(available_energy, 4)
-	return available_energy
+		return mini(available_gold, 4)
+	return available_gold
+
+func _sort_card_offer_paths(a: String, b: String, player_seed: int, round_number: int) -> bool:
+	var score_a: int = abs(hash("%s|%d|%d" % [a, player_seed, round_number])) % 1000
+	var score_b: int = abs(hash("%s|%d|%d" % [b, player_seed, round_number])) % 1000
+	if score_a != score_b:
+		return score_a < score_b
+	return a < b
+
+func _choose_background_shop_pick(player_state: MatchPlayerState, offer_paths: Array[String], round_number: int) -> String:
+	var best_path: String = ""
+	var best_score: int = -100000
+	for card_path in offer_paths:
+		var card_data: CardData = _load_card_data(card_path)
+		if card_data == null:
+			continue
+		var score: int = _estimate_card_pick_score(card_data, player_state.slot_index, round_number)
+		if best_path.is_empty() or score > best_score:
+			best_path = card_path
+			best_score = score
+	return best_path
+
+func _estimate_card_pick_score(card_data: CardData, player_seed: int, round_number: int) -> int:
+	if card_data == null:
+		return 0
+
+	var score: int = 10
+	match card_data.support_effect_type:
+		GameEnums.SupportCardEffectType.UNIT_ATTACK_BUFF:
+			score += 24
+		GameEnums.SupportCardEffectType.MAGIC_ATTACK_MULTIPLIER:
+			score += 28
+		GameEnums.SupportCardEffectType.START_STEALTH:
+			score += 18
+		GameEnums.SupportCardEffectType.DELAYED_BLIND_FIELD:
+			score += 16
+		GameEnums.SupportCardEffectType.DEATH_MANA_PACT:
+			score += 18
+		GameEnums.SupportCardEffectType.CELL_TRAP_STUN:
+			score += 20
+		GameEnums.SupportCardEffectType.PLAYER_LIFE_HEAL:
+			score += 12
+		GameEnums.SupportCardEffectType.CONDITIONAL_NEXT_ROUND_GOLD:
+			score += 22
+		GameEnums.SupportCardEffectType.CONDITIONAL_TRIBUTE_STEAL:
+			score += 24
+		GameEnums.SupportCardEffectType.PHYSICAL_DEFENSE_RATIO_BUFF:
+			score += 20
+		GameEnums.SupportCardEffectType.PHYSICAL_ATTACK_RANGE_BUFF:
+			score += 26
+		GameEnums.SupportCardEffectType.OPENING_REPOSITION:
+			score += 18
+		_:
+			score += 10
+
+	score += abs(hash("%s|%d|%d" % [card_data.id, player_seed, round_number])) % 9
+	return score
+
+func _estimate_owned_cards_power_bonus(card_paths: Array[String]) -> int:
+	var bonus: int = 0
+	for card_path in card_paths:
+		var card_data: CardData = _load_card_data(card_path)
+		if card_data == null:
+			continue
+		bonus += 8
+		match card_data.support_effect_type:
+			GameEnums.SupportCardEffectType.UNIT_ATTACK_BUFF:
+				bonus += 18
+			GameEnums.SupportCardEffectType.MAGIC_ATTACK_MULTIPLIER:
+				bonus += 18
+			GameEnums.SupportCardEffectType.CELL_TRAP_STUN:
+				bonus += 12
+			GameEnums.SupportCardEffectType.DELAYED_BLIND_FIELD:
+				bonus += 10
+			GameEnums.SupportCardEffectType.DEATH_MANA_PACT:
+				bonus += 8
+			GameEnums.SupportCardEffectType.CONDITIONAL_NEXT_ROUND_GOLD:
+				bonus += 14
+			GameEnums.SupportCardEffectType.CONDITIONAL_TRIBUTE_STEAL:
+				bonus += 16
+			GameEnums.SupportCardEffectType.PHYSICAL_DEFENSE_RATIO_BUFF:
+				bonus += 14
+			GameEnums.SupportCardEffectType.PHYSICAL_ATTACK_RANGE_BUFF:
+				bonus += 18
+			GameEnums.SupportCardEffectType.OPENING_REPOSITION:
+				bonus += 10
+	return bonus
+
+func _card_names_from_paths(card_paths: Array[String]) -> Array[String]:
+	var names: Array[String] = []
+	for card_path in card_paths:
+		var card_data: CardData = _load_card_data(card_path)
+		if card_data == null:
+			continue
+		names.append(card_data.display_name)
+	return names
 
 func _load_deck_data(path: String) -> DeckData:
 	if path.is_empty():
@@ -555,6 +1987,18 @@ func _load_unit_data(path: String) -> UnitData:
 	if loaded is UnitData:
 		unit_cache[path] = loaded
 		return loaded as UnitData
+	return null
+
+func _load_card_data(path: String) -> CardData:
+	if path.is_empty():
+		return null
+	if card_cache.has(path):
+		return card_cache[path] as CardData
+
+	var loaded: Resource = load(path)
+	if loaded is CardData:
+		card_cache[path] = loaded
+		return loaded as CardData
 	return null
 
 func _resolve_unit_class_label(unit_data: UnitData) -> String:

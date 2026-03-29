@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "clan_berserker_blind_fury"
+display_name = "Furia Cega"
+effect_type = 19
+mana_cost = 70
+cooldown = 0.0
+range = 1
+duration_turns = 4
+physical_defense_multiplier = 0.0
+action_charge_multiplier = 2.0
+description = "Por alguns turnos, dobra o ritmo de ataques do berserker e zera sua defesa fisica."

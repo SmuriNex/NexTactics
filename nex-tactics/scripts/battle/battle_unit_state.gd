@@ -14,6 +14,10 @@ var bonus_physical_attack: int = 0
 var bonus_magic_attack: int = 0
 var bonus_physical_defense: int = 0
 var bonus_magic_defense: int = 0
+var deck_passive_physical_attack: int = 0
+var deck_passive_magic_attack: int = 0
+var deck_passive_physical_defense: int = 0
+var deck_passive_magic_defense: int = 0
 var synergy_race_count: int = 0
 var synergy_tier: int = 0
 var synergy_summary: String = ""
@@ -36,16 +40,28 @@ var magic_defense_multiplier_status: float = 1.0
 var magic_defense_debuff_turns: int = 0
 var mana_gain_multiplier_status: float = 1.0
 var mana_gain_modifier_turns: int = 0
+var action_charge_multiplier_status: float = 1.0
+var action_charge_modifier_turns: int = 0
 var skip_turns_remaining: int = 0
 var stealth_turns_remaining: int = 0
 var physical_miss_chance_status: float = 0.0
 var physical_miss_turns: int = 0
+var received_physical_damage_multiplier_status: float = 1.0
+var received_physical_damage_turns: int = 0
 var current_physical_shield: int = 0
 var physical_shield_turns: int = 0
 var melee_reflect_damage: int = 0
 var reflect_turns: int = 0
 var guaranteed_magic_crit_hits: int = 0
 var death_mana_ratio_to_master: float = 0.0
+var blocked_basic_attack_count: int = 0
+var lifesteal_ratio_status: float = 0.0
+var lifesteal_turns: int = 0
+var attack_range_bonus_status: int = 0
+var attack_range_bonus_turns: int = 0
+var cleave_attacks_remaining: int = 0
+var forced_target_instance_id: int = -1
+var forced_target_turns: int = 0
 var last_move_origin: Vector2i = Vector2i(-1, -1)
 var last_move_destination: Vector2i = Vector2i(-1, -1)
 var last_move_target_key: String = ""
@@ -244,12 +260,12 @@ func get_class_magic_attack_bonus() -> int:
 func get_physical_attack_value() -> int:
 	if unit_data == null:
 		return 0
-	return unit_data.physical_attack + get_race_physical_attack_bonus() + get_class_physical_attack_bonus() + synergy_physical_attack + bonus_physical_attack
+	return unit_data.physical_attack + get_race_physical_attack_bonus() + get_class_physical_attack_bonus() + synergy_physical_attack + bonus_physical_attack + deck_passive_physical_attack
 
 func get_magic_attack_value() -> int:
 	if unit_data == null:
 		return 0
-	return unit_data.magic_attack + get_race_magic_attack_bonus() + get_class_magic_attack_bonus() + synergy_magic_attack + bonus_magic_attack
+	return unit_data.magic_attack + get_race_magic_attack_bonus() + get_class_magic_attack_bonus() + synergy_magic_attack + bonus_magic_attack + deck_passive_magic_attack
 
 func get_attack_value() -> int:
 	return get_physical_attack_value() + get_magic_attack_value()
@@ -281,13 +297,13 @@ func get_class_magic_defense_bonus() -> int:
 func get_physical_defense_value() -> int:
 	if unit_data == null:
 		return 0
-	var raw_value: int = unit_data.physical_defense + get_race_physical_defense_bonus() + get_class_physical_defense_bonus() + synergy_physical_defense + bonus_physical_defense
+	var raw_value: int = unit_data.physical_defense + get_race_physical_defense_bonus() + get_class_physical_defense_bonus() + synergy_physical_defense + bonus_physical_defense + deck_passive_physical_defense
 	return maxi(0, int(round(float(raw_value) * physical_defense_multiplier_status)))
 
 func get_magic_defense_value() -> int:
 	if unit_data == null:
 		return 0
-	var raw_value: int = unit_data.magic_defense + get_race_magic_defense_bonus() + get_class_magic_defense_bonus() + synergy_magic_defense + bonus_magic_defense
+	var raw_value: int = unit_data.magic_defense + get_race_magic_defense_bonus() + get_class_magic_defense_bonus() + synergy_magic_defense + bonus_magic_defense + deck_passive_magic_defense
 	return maxi(0, int(round(float(raw_value) * magic_defense_multiplier_status)))
 
 func get_defense_value() -> int:
@@ -301,7 +317,7 @@ func get_class_range_bonus() -> int:
 func get_attack_range() -> int:
 	if unit_data == null:
 		return 1
-	return maxi(1, unit_data.attack_range + get_class_range_bonus())
+	return maxi(1, unit_data.attack_range + get_class_range_bonus() + attack_range_bonus_status)
 
 func get_race_crit_bonus() -> float:
 	return 0.0
@@ -323,7 +339,8 @@ func get_race_action_charge_bonus() -> int:
 	return 0
 
 func get_action_charge_gain() -> int:
-	return 100 + get_race_action_charge_bonus() + synergy_action_charge_bonus
+	var base_value: int = 100 + get_race_action_charge_bonus() + synergy_action_charge_bonus
+	return maxi(1, int(round(float(base_value) * action_charge_multiplier_status)))
 
 func gain_action_charge() -> void:
 	action_charge += get_action_charge_gain()
@@ -442,6 +459,13 @@ func clear_round_modifiers() -> void:
 	bonus_magic_attack = 0
 	bonus_physical_defense = 0
 	bonus_magic_defense = 0
+	clear_deck_passive_modifiers()
+
+func clear_deck_passive_modifiers() -> void:
+	deck_passive_physical_attack = 0
+	deck_passive_magic_attack = 0
+	deck_passive_physical_defense = 0
+	deck_passive_magic_defense = 0
 
 func clear_navigation_memory() -> void:
 	last_move_origin = Vector2i(-1, -1)
@@ -530,16 +554,28 @@ func clear_status_effects() -> void:
 	magic_defense_debuff_turns = 0
 	mana_gain_multiplier_status = 1.0
 	mana_gain_modifier_turns = 0
+	action_charge_multiplier_status = 1.0
+	action_charge_modifier_turns = 0
 	skip_turns_remaining = 0
 	stealth_turns_remaining = 0
 	physical_miss_chance_status = 0.0
 	physical_miss_turns = 0
+	received_physical_damage_multiplier_status = 1.0
+	received_physical_damage_turns = 0
 	current_physical_shield = 0
 	physical_shield_turns = 0
 	melee_reflect_damage = 0
 	reflect_turns = 0
 	guaranteed_magic_crit_hits = 0
 	death_mana_ratio_to_master = 0.0
+	blocked_basic_attack_count = 0
+	lifesteal_ratio_status = 0.0
+	lifesteal_turns = 0
+	attack_range_bonus_status = 0
+	attack_range_bonus_turns = 0
+	cleave_attacks_remaining = 0
+	forced_target_instance_id = -1
+	forced_target_turns = 0
 
 func mark_as_summoned_token(p_source_unit_id: String) -> void:
 	is_summoned_token = true
@@ -558,6 +594,13 @@ func apply_mana_gain_multiplier(multiplier: float, turns: int) -> void:
 	mana_gain_multiplier_status = mini(mana_gain_multiplier_status, multiplier)
 	mana_gain_modifier_turns = maxi(mana_gain_modifier_turns, turns)
 
+func apply_action_charge_multiplier(multiplier: float, turns: int) -> void:
+	if multiplier >= 1.0:
+		action_charge_multiplier_status = maxf(action_charge_multiplier_status, multiplier)
+	else:
+		action_charge_multiplier_status = minf(action_charge_multiplier_status, multiplier)
+	action_charge_modifier_turns = maxi(action_charge_modifier_turns, turns)
+
 func apply_turn_skip(turns: int) -> void:
 	skip_turns_remaining = maxi(skip_turns_remaining, turns)
 
@@ -567,6 +610,10 @@ func apply_stealth(turns: int) -> void:
 func apply_physical_miss_chance(chance: float, turns: int) -> void:
 	physical_miss_chance_status = maxf(physical_miss_chance_status, chance)
 	physical_miss_turns = maxi(physical_miss_turns, turns)
+
+func apply_received_physical_damage_multiplier(multiplier: float, turns: int) -> void:
+	received_physical_damage_multiplier_status = maxf(received_physical_damage_multiplier_status, multiplier)
+	received_physical_damage_turns = maxi(received_physical_damage_turns, turns)
 
 func apply_physical_shield(amount: int, turns: int, reflect_damage_amount: int = 0) -> void:
 	current_physical_shield = maxi(current_physical_shield, amount)
@@ -579,6 +626,54 @@ func apply_magic_crit_gift(hit_count: int) -> void:
 
 func apply_blood_pact(mana_ratio: float) -> void:
 	death_mana_ratio_to_master = maxf(death_mana_ratio_to_master, mana_ratio)
+
+func apply_basic_attack_block(count: int) -> void:
+	blocked_basic_attack_count = maxi(blocked_basic_attack_count, count)
+
+func consume_basic_attack_block() -> bool:
+	if blocked_basic_attack_count <= 0:
+		return false
+	blocked_basic_attack_count -= 1
+	return true
+
+func apply_lifesteal_ratio(ratio: float, turns: int) -> void:
+	lifesteal_ratio_status = maxf(lifesteal_ratio_status, ratio)
+	lifesteal_turns = maxi(lifesteal_turns, turns)
+
+func get_lifesteal_ratio() -> float:
+	return lifesteal_ratio_status
+
+func apply_attack_range_bonus(bonus: int, turns: int) -> void:
+	attack_range_bonus_status = maxi(attack_range_bonus_status, bonus)
+	attack_range_bonus_turns = maxi(attack_range_bonus_turns, turns)
+
+func apply_cleave_attacks(count: int) -> void:
+	cleave_attacks_remaining = maxi(cleave_attacks_remaining, count)
+
+func has_cleave_attacks() -> bool:
+	return cleave_attacks_remaining > 0
+
+func consume_cleave_attack() -> bool:
+	if cleave_attacks_remaining <= 0:
+		return false
+	cleave_attacks_remaining -= 1
+	return true
+
+func apply_forced_target(target: BattleUnitState, turns: int) -> void:
+	if target == null:
+		return
+	forced_target_instance_id = target.get_instance_id()
+	forced_target_turns = maxi(forced_target_turns, turns)
+
+func has_forced_target() -> bool:
+	return forced_target_turns > 0 and forced_target_instance_id != -1
+
+func is_forced_target(target: BattleUnitState) -> bool:
+	return target != null and has_forced_target() and target.get_instance_id() == forced_target_instance_id
+
+func clear_forced_target() -> void:
+	forced_target_instance_id = -1
+	forced_target_turns = 0
 
 func has_magic_crit_gift() -> bool:
 	return guaranteed_magic_crit_hits > 0
@@ -603,6 +698,9 @@ func consume_skip_turn() -> bool:
 
 func get_physical_miss_chance() -> float:
 	return physical_miss_chance_status
+
+func get_received_physical_damage_multiplier() -> float:
+	return received_physical_damage_multiplier_status
 
 func absorb_physical_damage(amount: int) -> Dictionary:
 	if amount <= 0 or current_physical_shield <= 0:
@@ -636,10 +734,20 @@ func advance_turn_effects() -> void:
 		if mana_gain_modifier_turns <= 0:
 			mana_gain_multiplier_status = 1.0
 
+	if action_charge_modifier_turns > 0:
+		action_charge_modifier_turns -= 1
+		if action_charge_modifier_turns <= 0:
+			action_charge_multiplier_status = 1.0
+
 	if physical_miss_turns > 0:
 		physical_miss_turns -= 1
 		if physical_miss_turns <= 0:
 			physical_miss_chance_status = 0.0
+
+	if received_physical_damage_turns > 0:
+		received_physical_damage_turns -= 1
+		if received_physical_damage_turns <= 0:
+			received_physical_damage_multiplier_status = 1.0
 
 	if physical_shield_turns > 0:
 		physical_shield_turns -= 1
@@ -650,6 +758,21 @@ func advance_turn_effects() -> void:
 		reflect_turns -= 1
 		if reflect_turns <= 0:
 			melee_reflect_damage = 0
+
+	if lifesteal_turns > 0:
+		lifesteal_turns -= 1
+		if lifesteal_turns <= 0:
+			lifesteal_ratio_status = 0.0
+
+	if attack_range_bonus_turns > 0:
+		attack_range_bonus_turns -= 1
+		if attack_range_bonus_turns <= 0:
+			attack_range_bonus_status = 0
+
+	if forced_target_turns > 0:
+		forced_target_turns -= 1
+		if forced_target_turns <= 0:
+			clear_forced_target()
 
 	if stealth_turns_remaining > 0:
 		stealth_turns_remaining -= 1

@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "battle_priest_quick_bandage"
+display_name = "Bandagem Rapida"
+effect_type = 23
+mana_cost = 60
+cooldown = 0.0
+range = 3
+heal_ratio = 0.25
+description = "Cura o aliado com menor vida em 25% do HP maximo."

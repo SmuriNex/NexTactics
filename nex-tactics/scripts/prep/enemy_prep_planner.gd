@@ -17,15 +17,15 @@ const BACKLINE_CLASSES: Array[int] = [
 func build_deploy_orders(
 	board_grid: BoardGrid,
 	deploy_pool: Array,
-	available_energy: int,
+	available_gold: int,
 	current_field_count: int,
 	field_limit: int,
 	round_number: int = 1
 ) -> Dictionary:
 	var occupied_coords: Array[Vector2i] = _collect_occupied_enemy_coords(board_grid)
 	var deploy_orders: Array[Dictionary] = []
-	var effective_energy_budget: int = _effective_energy_budget(available_energy, round_number)
-	var remaining_energy: int = effective_energy_budget
+	var effective_gold_budget: int = _effective_gold_budget(available_gold, round_number)
+	var remaining_gold: int = effective_gold_budget
 	var remaining_field_count: int = current_field_count
 	var effective_field_limit: int = _effective_field_limit(field_limit, round_number)
 	var slot_indexes: Array[int] = _sorted_slot_indexes(deploy_pool, round_number)
@@ -41,7 +41,7 @@ func build_deploy_orders(
 			continue
 		if option.unit_data == null:
 			continue
-		if option.unit_data.cost > remaining_energy:
+		if option.unit_data.cost > remaining_gold:
 			continue
 
 		var target_coord: Vector2i = _choose_enemy_coord(
@@ -59,15 +59,15 @@ func build_deploy_orders(
 			"cost": option.unit_data.cost,
 		})
 		occupied_coords.append(target_coord)
-		remaining_energy -= option.unit_data.cost
+		remaining_gold -= option.unit_data.cost
 		remaining_field_count += 1
 
 	return {
 		"orders": deploy_orders,
-		"energy_left": remaining_energy,
-		"energy_budget": effective_energy_budget,
+		"gold_left": remaining_gold,
+		"gold_budget": effective_gold_budget,
 		"field_limit": effective_field_limit,
-		"fairness_active": effective_field_limit < field_limit or effective_energy_budget < available_energy,
+		"fairness_active": effective_field_limit < field_limit or effective_gold_budget < available_gold,
 	}
 
 func _effective_field_limit(field_limit: int, round_number: int) -> int:
@@ -79,14 +79,14 @@ func _effective_field_limit(field_limit: int, round_number: int) -> int:
 		return mini(field_limit, 3)
 	return field_limit
 
-func _effective_energy_budget(available_energy: int, round_number: int) -> int:
+func _effective_gold_budget(available_gold: int, round_number: int) -> int:
 	if round_number <= 1:
-		return mini(available_energy, 2)
+		return mini(available_gold, 2)
 	if round_number == 2:
-		return mini(available_energy, 3)
+		return mini(available_gold, 3)
 	if round_number == 3:
-		return mini(available_energy, 4)
-	return available_energy
+		return mini(available_gold, 4)
+	return available_gold
 
 func _sorted_slot_indexes(deploy_pool: Array, round_number: int) -> Array[int]:
 	var slot_indexes: Array[int] = []

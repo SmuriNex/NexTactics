@@ -4,12 +4,9 @@ class_name BattleManager
 signal hud_update_requested(
 	round_number: int,
 	player_life: int,
-	enemy_life: int,
-	energy_value: int,
+	gold_value: int,
 	state_name: String,
-	deploy_selection: String,
-	synergy_summary: String,
-	round_result_summary: String
+	opponent_name: String
 )
 
 class DeployOption:
@@ -66,17 +63,17 @@ const DRAG_MODE_NONE := 0
 const DRAG_MODE_DEPLOY_SLOT := 1
 const DRAG_MODE_BOARD_UNIT := 2
 
-const ACTION_DELAY_ATTACK_SECONDS := 0.10
-const ACTION_DELAY_SKILL_SECONDS := 0.10
-const ACTION_DELAY_MOVE_SECONDS := 0.08
-const ACTION_DELAY_SKIP_SECONDS := 0.05
-const ACTION_DELAY_STUCK_SECONDS := 0.03
+const ACTION_DELAY_ATTACK_SECONDS := BattleConfig.ACTION_DELAY_ATTACK_SECONDS
+const ACTION_DELAY_SKILL_SECONDS := BattleConfig.ACTION_DELAY_SKILL_SECONDS
+const ACTION_DELAY_MOVE_SECONDS := BattleConfig.ACTION_DELAY_MOVE_SECONDS
+const ACTION_DELAY_SKIP_SECONDS := BattleConfig.ACTION_DELAY_SKIP_SECONDS
+const ACTION_DELAY_STUCK_SECONDS := BattleConfig.ACTION_DELAY_STUCK_SECONDS
 const MASTER_SKILL_DAMAGE := 8
 const MIN_COMBAT_CHIP_DAMAGE := 1
 const SUMMON_NEARBY_RADIUS := 2
+const THRAX_ADJACENCY_ATTACK_RATIO := 0.30
+const THRAX_CLEAVE_DAMAGE_RATIO := 0.65
 const SPAWN_COLUMN_ORDER: Array[int] = [3, 2, 4, 1, 5, 0, 6]
-const PLAYER_DECK_PATH := "res://data/decks/necromancer_deck.tres"
-const ENEMY_DECK_PATH := "res://data/decks/necromancer_deck.tres"
 
 const SUPPORT_CARD_FIELD_AID_PATH := "res://data/cards/demo_field_aid.tres"
 const SUPPORT_CARD_BATTLE_ORDERS_PATH := "res://data/cards/demo_battle_orders.tres"
@@ -88,8 +85,8 @@ const ENEMY_MASTER_COORD := Vector2i(3, 0)
 var current_state: int = GameEnums.BattleState.SETUP
 var current_match_phase: int = GameEnums.MatchPhase.LOBBY
 var current_round: int = 0
-var energy_current: int = 0
-var enemy_energy_current: int = 0
+var gold_current: int = 0
+var enemy_gold_current: int = 0
 var player_global_life: int = BattleConfig.GLOBAL_LIFE
 var enemy_global_life: int = BattleConfig.GLOBAL_LIFE
 var prep_time_remaining: float = 0.0
@@ -106,6 +103,8 @@ var enemy_deploy_pool: Array[DeployOption] = []
 var player_support_pool: Array[SupportOption] = []
 var selected_support_index: int = -1
 var _battle_running: bool = false
+var card_shop_open: bool = false
+var pending_card_shop_paths: Array[String] = []
 
 var drag_mode: int = DRAG_MODE_NONE
 var drag_slot_index: int = -1
@@ -118,6 +117,9 @@ var pending_player_respawns: Array[RespawnRequest] = []
 var pending_enemy_respawns: Array[RespawnRequest] = []
 var refresh_bar_fallbacks: Array[String] = []
 var player_units_sold_last_round: Array[String] = []
+var player_master_anchor_coord: Vector2i = PLAYER_MASTER_COORD
+var enemy_master_anchor_coord: Vector2i = ENEMY_MASTER_COORD
+var local_shop_ui_round_claimed: int = 0
 var inspected_unit: BattleUnitState = null
 var inspected_deploy_index: int = -1
 var inspected_support_index: int = -1
@@ -135,6 +137,12 @@ var pending_blinding_mist_turn: int = -1
 var pending_blinding_mist_team: int = -1
 var pending_blinding_mist_duration_turns: int = 2
 var pending_blinding_mist_physical_miss_chance: float = 0.5
+var pending_player_bonus_gold_on_win: int = 0
+var pending_enemy_bonus_gold_on_win: int = 0
+var pending_player_tribute_steal_on_win: int = 0
+var pending_enemy_tribute_steal_on_win: int = 0
+var pending_player_opening_reposition: bool = false
+var pending_enemy_opening_reposition: bool = false
 var bone_prison_coord: Vector2i = Vector2i(-1, -1)
 var bone_prison_owner_team: int = GameEnums.TeamSide.PLAYER
 var bone_prison_stun_turns: int = 2
@@ -157,6 +165,10 @@ func _get_signal_bus() -> Node:
 	return get_node_or_null("/root/SignalBus")
 
 func _ready() -> void:
+	if not GameData.has_selected_deck():
+		call_deferred("_redirect_to_deck_select")
+		return
+
 	randomize()
 	set_process(true)
 
@@ -170,6 +182,7 @@ func _ready() -> void:
 		hud_update_requested.connect(battle_hud.update_status)
 		battle_hud.player_sidebar_entry_pressed.connect(_on_player_sidebar_entry_pressed)
 		battle_hud.return_to_local_board_pressed.connect(_on_return_to_local_board_pressed)
+		battle_hud.card_shop_option_selected.connect(_on_card_shop_option_selected)
 		battle_hud.clear_unit_info()
 	if deploy_bar:
 		deploy_bar.deploy_slot_pressed.connect(_on_deploy_slot_pressed)
@@ -179,12 +192,21 @@ func _ready() -> void:
 
 	start_match()
 
+func _redirect_to_deck_select() -> void:
+	get_tree().change_scene_to_file(GameData.DECK_SELECT_SCENE_PATH)
+
 func _process(delta: float) -> void:
+	var remote_tables_changed: bool = lobby_manager.update_live_tables(delta, observed_player_id)
+	if remote_tables_changed:
+		_emit_hud_update()
+
 	if current_match_phase != GameEnums.MatchPhase.ROUND_PREP:
 		return
 	if current_state != GameEnums.BattleState.PREP:
 		return
 	if not prep_timer_active or _battle_running:
+		return
+	if card_shop_open:
 		return
 
 	prep_time_remaining = maxf(0.0, prep_time_remaining - delta)
@@ -210,7 +232,16 @@ func _input(event: InputEvent) -> void:
 			if _handle_board_right_click(mouse_event.position):
 				return
 
+	if event is InputEventKey:
+		var global_key_event := event as InputEventKey
+		if global_key_event.pressed and not global_key_event.echo:
+			if global_key_event.keycode == KEY_ESCAPE and _is_observer_mode_active():
+				_clear_observed_board_preview()
+				return
+
 	if current_state != GameEnums.BattleState.PREP or input_locked:
+		return
+	if card_shop_open or _is_observer_mode_active():
 		return
 
 	if event is InputEventKey:
@@ -313,6 +344,12 @@ func _handle_left_release(screen_pos: Vector2) -> void:
 
 func _handle_info_panel_click(screen_pos: Vector2) -> void:
 	if not _is_click_over_inspectable_target(screen_pos):
+		if _is_observer_mode_active():
+			inspected_unit = null
+			inspected_deploy_index = -1
+			inspected_support_index = -1
+			_refresh_inspected_unit_panel()
+			return
 		_clear_inspected_context()
 
 func _is_click_over_inspectable_target(screen_pos: Vector2) -> bool:
@@ -326,6 +363,8 @@ func _is_click_over_inspectable_target(screen_pos: Vector2) -> bool:
 	var coord: Vector2i = _screen_to_board_coord(screen_pos)
 	if not board_grid.is_valid_coord(coord):
 		return false
+	if _is_observer_mode_active():
+		return board_grid.get_observer_unit_at(coord) != null
 	if not board_grid.is_coord_visible_in_current_view(coord):
 		return false
 	var clicked_unit: BattleUnitState = board_grid.get_unit_at(coord)
@@ -340,6 +379,13 @@ func _handle_board_right_click(screen_pos: Vector2) -> bool:
 	var coord: Vector2i = _screen_to_board_coord(screen_pos)
 	if not board_grid.is_valid_coord(coord):
 		return false
+	if _is_observer_mode_active():
+		var observed_unit: BattleUnitState = board_grid.get_observer_unit_at(coord)
+		if observed_unit != null:
+			_on_observed_board_unit_right_clicked(observed_unit)
+		else:
+			_refresh_inspected_unit_panel()
+		return true
 	if not board_grid.is_coord_visible_in_current_view(coord):
 		_clear_inspected_context()
 		return true
@@ -363,6 +409,9 @@ func _is_screen_over_ui(screen_pos: Vector2) -> bool:
 	if battle_hud != null and battle_hud.is_over_hud(screen_pos):
 		return true
 	return false
+
+func _is_observer_mode_active() -> bool:
+	return board_grid != null and board_grid.is_observer_mode_active()
 
 func _begin_deploy_drag(slot_index: int) -> void:
 	if slot_index < 0 or slot_index >= player_deploy_pool.size():
@@ -445,6 +494,10 @@ func _finish_board_unit_drag(screen_pos: Vector2) -> void:
 		if move_ok and drag_hover_coord != drag_unit.coord:
 			var from_coord: Vector2i = drag_unit.coord
 			if board_grid.move_unit(drag_unit, drag_hover_coord):
+				if drag_unit.team_side == GameEnums.TeamSide.PLAYER:
+					drag_unit.home_coord = drag_hover_coord
+					if drag_unit.is_master:
+						_set_persistent_master_home_coord(drag_unit.team_side, drag_hover_coord)
 				print("PREP moveu %s de %s para %s" % [
 					drag_unit.get_combat_label(),
 					from_coord,
@@ -571,7 +624,12 @@ func _apply_board_view_mode(view_mode: int, immediate: bool = false) -> void:
 		signal_bus.board_view_mode_changed.emit(view_mode)
 
 func _setup_match_context() -> void:
-	lobby_manager.setup_demo_lobby(BattleConfig.LOBBY_PLAYER_COUNT, LOCAL_PLAYER_ID, PLAYER_DECK_PATH)
+	lobby_manager.setup_demo_lobby(
+		BattleConfig.LOBBY_PLAYER_COUNT,
+		LOCAL_PLAYER_ID,
+		_default_enemy_deck_path()
+	)
+	lobby_manager.set_player_deck_path(LOCAL_PLAYER_ID, _selected_player_deck_path())
 	round_manager = RoundManager.new()
 	_set_match_phase(GameEnums.MatchPhase.LOBBY)
 	print("LOBBY ready: %d players | local=%s" % [
@@ -584,12 +642,14 @@ func _prepare_round_pairing_for_current_round() -> void:
 	if lobby_player_ids.is_empty():
 		return
 
+	lobby_manager.set_player_deck_path(LOCAL_PLAYER_ID, _selected_player_deck_path(), false)
 	_set_match_phase(GameEnums.MatchPhase.ROUND_PAIRING)
 	var pairings: Array[Dictionary] = round_manager.build_pairings(
 		lobby_player_ids,
 		current_round
 	)
 	lobby_manager.apply_round_pairings(pairings)
+	var granted_cards: Array[Dictionary] = lobby_manager.grant_periodic_cards_for_round(current_round, [LOCAL_PLAYER_ID])
 	current_opponent_player_id = round_manager.get_opponent_for_player(LOCAL_PLAYER_ID)
 	_sync_lobby_life_values(true)
 
@@ -601,12 +661,18 @@ func _prepare_round_pairing_for_current_round() -> void:
 		current_round,
 		_current_opponent_display_name(),
 	])
+	for grant_entry in granted_cards:
+		print("LOJA do lobby: %s recebeu %s" % [
+			str(grant_entry.get("player_name", "Jogador")),
+			str(grant_entry.get("card_name", "Carta")),
+		])
 	for pairing in pairings:
 		print("  pairing table=%d %s vs %s" % [
 			int(pairing.get("table_index", -1)),
 			str(pairing.get("player_a", "")),
 			str(pairing.get("player_b", "")),
 		])
+	lobby_manager.prepare_live_tables_for_round(pairings, current_round, [LOCAL_PLAYER_ID])
 
 func _sync_lobby_life_values(load_from_lobby: bool = false) -> void:
 	var local_player: MatchPlayerState = lobby_manager.get_player(LOCAL_PLAYER_ID)
@@ -636,13 +702,83 @@ func _current_opponent_display_name() -> String:
 		return "No Pairing"
 	return current_opponent_player_id
 
+func _get_player_state_for_team(team_side: int) -> MatchPlayerState:
+	if team_side == GameEnums.TeamSide.PLAYER:
+		return lobby_manager.get_player(LOCAL_PLAYER_ID)
+	return lobby_manager.get_player(current_opponent_player_id)
+
+func _consume_team_prep_gold_bonus(team_side: int) -> int:
+	var player_state: MatchPlayerState = _get_player_state_for_team(team_side)
+	if player_state == null or player_state.banked_gold <= 0:
+		return 0
+	var bonus: int = maxi(0, player_state.banked_gold)
+	player_state.banked_gold = 0
+	return bonus
+
+func _reset_round_card_effect_state() -> void:
+	pending_player_bonus_gold_on_win = 0
+	pending_enemy_bonus_gold_on_win = 0
+	pending_player_tribute_steal_on_win = 0
+	pending_enemy_tribute_steal_on_win = 0
+	pending_player_opening_reposition = false
+	pending_enemy_opening_reposition = false
+
+func _selected_player_deck_path() -> String:
+	return GameData.get_selected_deck_path()
+
+func _default_enemy_deck_path() -> String:
+	return GameData.get_default_opponent_deck_path()
+
 func _load_active_decks() -> void:
-	player_deck = _load_deck_data(PLAYER_DECK_PATH)
-	enemy_deck = _load_deck_data(ENEMY_DECK_PATH)
+	player_deck = _load_deck_for_player(LOCAL_PLAYER_ID, GameData.get_selected_deck_id())
+	enemy_deck = _load_deck_for_player(current_opponent_player_id, GameData.get_default_opponent_deck_id())
 	player_unit_path_registry = _build_unit_path_registry(player_deck)
 	enemy_unit_path_registry = _build_unit_path_registry(enemy_deck)
 	_log_loaded_deck("PLAYER", player_deck)
 	_log_loaded_deck("ENEMY", enemy_deck)
+
+func _load_deck_for_player(player_id: String, fallback_deck_id: String) -> DeckData:
+	var deck_path: String = ""
+	if not player_id.is_empty():
+		var player_state: MatchPlayerState = lobby_manager.get_player(player_id)
+		if player_state != null:
+			deck_path = player_state.deck_path
+	if deck_path.is_empty():
+		deck_path = GameData.get_deck_path(fallback_deck_id)
+	return _load_deck_data(deck_path)
+
+func _load_mordos_deck() -> DeckData:
+	return _load_deck_data(GameData.get_deck_path(GameData.DECK_ID_MORDOS))
+
+func _load_thrax_deck() -> DeckData:
+	return _load_deck_data(GameData.get_deck_path(GameData.DECK_ID_THRAX))
+
+func _sync_runtime_masters_with_active_decks() -> void:
+	_sync_team_master_with_deck(GameEnums.TeamSide.PLAYER, player_deck, PLAYER_MASTER_COORD)
+	_sync_team_master_with_deck(GameEnums.TeamSide.ENEMY, enemy_deck, ENEMY_MASTER_COORD)
+
+func _sync_team_master_with_deck(team_side: int, deck_data: DeckData, fallback_coord: Vector2i) -> void:
+	if deck_data == null or deck_data.master_data_path.is_empty():
+		return
+	var expected_master_data: UnitData = _load_unit_data(deck_data.master_data_path)
+	if expected_master_data == null:
+		return
+	var current_master: BattleUnitState = _find_team_master(team_side)
+	if current_master != null and current_master.unit_data != null and current_master.unit_data.id == expected_master_data.id:
+		_set_persistent_master_home_coord(team_side, current_master.home_coord)
+		return
+	var pending_home_coord: Vector2i = _get_pending_respawn_home_coord(expected_master_data.id, team_side)
+	if board_grid.is_valid_coord(pending_home_coord):
+		_set_persistent_master_home_coord(team_side, pending_home_coord)
+		return
+	if current_master != null:
+		board_grid.remove_unit(current_master, true, true)
+		runtime_units.erase(current_master)
+	var master_home_coord: Vector2i = _get_persistent_master_home_coord(team_side)
+	if not board_grid.is_valid_coord(master_home_coord):
+		master_home_coord = fallback_coord
+	_spawn_roster_unit(deck_data.master_data_path, team_side, master_home_coord, true, master_home_coord)
+	_refresh_race_synergy_state(false)
 
 func _load_deck_data(path: String) -> DeckData:
 	var loaded: Resource = load(path)
@@ -657,12 +793,12 @@ func _build_unit_path_registry(deck_data: DeckData) -> Dictionary:
 	if deck_data == null:
 		return registry
 
-	if not deck_data.master_unit_path.is_empty():
-		var master_data: UnitData = _load_unit_data(deck_data.master_unit_path)
+	if not deck_data.master_data_path.is_empty():
+		var master_data: UnitData = _load_unit_data(deck_data.master_data_path)
 		if master_data != null:
-			registry[master_data.id] = deck_data.master_unit_path
+			registry[master_data.id] = deck_data.master_data_path
 
-	for unit_path in deck_data.unit_paths:
+	for unit_path in deck_data.unit_pool_paths:
 		var unit_data: UnitData = _load_unit_data(unit_path)
 		if unit_data != null:
 			registry[unit_data.id] = unit_path
@@ -671,6 +807,24 @@ func _build_unit_path_registry(deck_data: DeckData) -> Dictionary:
 
 func _master_home_coord(team_side: int) -> Vector2i:
 	return PLAYER_MASTER_COORD if team_side == GameEnums.TeamSide.PLAYER else ENEMY_MASTER_COORD
+
+func _get_persistent_master_home_coord(team_side: int) -> Vector2i:
+	return player_master_anchor_coord if team_side == GameEnums.TeamSide.PLAYER else enemy_master_anchor_coord
+
+func _set_persistent_master_home_coord(team_side: int, coord: Vector2i) -> void:
+	if not board_grid.is_valid_coord(coord):
+		return
+	if team_side == GameEnums.TeamSide.PLAYER:
+		player_master_anchor_coord = coord
+	else:
+		enemy_master_anchor_coord = coord
+
+func _get_pending_respawn_home_coord(unit_id: String, team_side: int) -> Vector2i:
+	var queue: Array[RespawnRequest] = pending_player_respawns if team_side == GameEnums.TeamSide.PLAYER else pending_enemy_respawns
+	for request in queue:
+		if request.unit_id == unit_id and board_grid.is_valid_coord(request.home_coord):
+			return request.home_coord
+	return Vector2i(-1, -1)
 
 func _default_deploy_home_coord(slot_index: int, team_side: int) -> Vector2i:
 	var row_order: Array[int] = []
@@ -692,12 +846,16 @@ func start_match() -> void:
 	current_round = 1
 	player_global_life = BattleConfig.GLOBAL_LIFE
 	enemy_global_life = BattleConfig.GLOBAL_LIFE
+	gold_current = 0
 	prep_time_remaining = 0.0
 	prep_timer_active = false
 	prep_timer_last_display_second = -1
-	enemy_energy_current = 0
+	enemy_gold_current = 0
 	current_opponent_player_id = ""
 	observed_player_id = ""
+	card_shop_open = false
+	pending_card_shop_paths.clear()
+	local_shop_ui_round_claimed = 0
 	current_board_view_mode = GameEnums.BoardViewMode.FULL_BATTLE
 	_set_input_locked(false)
 	pending_player_respawns.clear()
@@ -716,9 +874,12 @@ func start_match() -> void:
 	pending_blinding_mist_team = -1
 	pending_blinding_mist_duration_turns = 2
 	pending_blinding_mist_physical_miss_chance = 0.5
+	_reset_round_card_effect_state()
 	bone_prison_coord = Vector2i(-1, -1)
 	bone_prison_stun_turns = 2
 	bone_prison_mana_gain_multiplier = 0.0
+	player_master_anchor_coord = PLAYER_MASTER_COORD
+	enemy_master_anchor_coord = ENEMY_MASTER_COORD
 	_clear_inspected_context()
 
 	set_state(GameEnums.BattleState.SETUP)
@@ -742,15 +903,21 @@ func end_round() -> void:
 func _setup_initial_match_board() -> void:
 	_clear_all_runtime_units()
 	if player_deck != null:
-		_spawn_roster_unit(player_deck.master_unit_path, GameEnums.TeamSide.PLAYER, PLAYER_MASTER_COORD, true)
+		_spawn_roster_unit(player_deck.master_data_path, GameEnums.TeamSide.PLAYER, PLAYER_MASTER_COORD, true)
 	if enemy_deck != null:
-		_spawn_roster_unit(enemy_deck.master_unit_path, GameEnums.TeamSide.ENEMY, ENEMY_MASTER_COORD, true)
+		_spawn_roster_unit(enemy_deck.master_data_path, GameEnums.TeamSide.ENEMY, ENEMY_MASTER_COORD, true)
 
 func _start_prep_phase() -> void:
+	card_shop_open = false
+	pending_card_shop_paths.clear()
+	if battle_hud:
+		battle_hud.hide_card_shop()
 	_clear_round_limited_tokens()
 	_remove_dead_runtime_units()
 	_prepare_round_pairing_for_current_round()
-	lobby_manager.build_remote_round_snapshots(current_round, [LOCAL_PLAYER_ID])
+	_load_active_decks()
+	_sync_runtime_masters_with_active_decks()
+	_reset_round_card_effect_state()
 
 	_ensure_missing_master_respawns()
 	var respawned_units: Array[String] = _process_pending_respawns()
@@ -774,13 +941,15 @@ func _start_prep_phase() -> void:
 	prep_time_remaining = BattleConfig.PREP_DURATION_SECONDS
 	prep_timer_active = true
 	prep_timer_last_display_second = -1
-	energy_current = BattleConfig.STARTING_ENERGY + ((current_round - 1) * BattleConfig.ENERGY_PER_ROUND)
-	enemy_energy_current = energy_current
+	var base_gold: int = BattleConfig.STARTING_GOLD + ((current_round - 1) * BattleConfig.GOLD_PER_ROUND)
+	gold_current = base_gold + _consume_team_prep_gold_bonus(GameEnums.TeamSide.PLAYER)
+	enemy_gold_current = base_gold + _consume_team_prep_gold_bonus(GameEnums.TeamSide.ENEMY)
 	_clear_inspected_context()
 	_clear_drag_state()
 	_clear_support_selection(false)
 	_apply_board_view_mode(GameEnums.BoardViewMode.SELF_ONLY, true)
 	_auto_prepare_enemy_board()
+	_auto_use_enemy_support_cards()
 	_refresh_race_synergy_state(true)
 	_sync_runtime_board_snapshots(_match_phase_name())
 	_refresh_targeting_preview()
@@ -791,23 +960,24 @@ func _start_prep_phase() -> void:
 	_refresh_deploy_bar()
 	_refresh_inspected_unit_panel()
 	_emit_hud_update()
+	_maybe_open_periodic_card_shop()
 
 	_log_round_refresh(restored_survivors, respawned_units)
-	print("PREP iniciado: rodada=%d energia=%d vida_jogador=%d vida_inimigo=%d" % [
+	print("PREP iniciado: rodada=%d ouro=%d vida_jogador=%d vida_inimigo=%d" % [
 		current_round,
-		energy_current,
+		gold_current,
 		player_global_life,
 		enemy_global_life,
 	])
-	print("PREP inimigo: energia=%d unidades=%d" % [
-		enemy_energy_current,
+	print("PREP inimigo: ouro=%d unidades=%d" % [
+		enemy_gold_current,
 		_count_non_master_units(GameEnums.TeamSide.ENEMY),
 	])
 	print("Unidades em campo: JOGADOR=%d INIMIGO=%d" % [
 		_count_living_team(GameEnums.TeamSide.PLAYER),
 		_count_living_team(GameEnums.TeamSide.ENEMY),
 	])
-	print("Controles do PREP: arraste slots de unidade para deploy, arraste unidades no tabuleiro, use a linha de suportes para armar efeitos, clique nos alvos destacados, ENTER/SPACE inicia a batalha, botao direito abre info")
+	print("Controles do PREP: arraste slots de unidade para deploy, arraste unidades no tabuleiro, use a linha de cartas para armar efeitos, clique nos alvos destacados, ENTER/SPACE inicia a batalha, botao direito abre info")
 
 func _restore_survivors_for_new_prep() -> Array[String]:
 	var rebuild_units: Array[BattleUnitState] = []
@@ -883,9 +1053,9 @@ func _sort_units_for_clean_prep(a: BattleUnitState, b: BattleUnitState) -> bool:
 
 func _ensure_missing_master_respawns() -> void:
 	if player_deck != null:
-		_enqueue_missing_roster_respawn(player_deck.master_unit_path, GameEnums.TeamSide.PLAYER, true)
+		_enqueue_missing_roster_respawn(player_deck.master_data_path, GameEnums.TeamSide.PLAYER, true)
 	if enemy_deck != null:
-		_enqueue_missing_roster_respawn(enemy_deck.master_unit_path, GameEnums.TeamSide.ENEMY, true)
+		_enqueue_missing_roster_respawn(enemy_deck.master_data_path, GameEnums.TeamSide.ENEMY, true)
 
 func _enqueue_missing_roster_respawn(unit_path: String, team_side: int, is_master: bool = false) -> void:
 	var unit_data: UnitData = _load_unit_data(unit_path)
@@ -900,7 +1070,7 @@ func _enqueue_missing_roster_respawn(unit_path: String, team_side: int, is_maste
 		unit_path,
 		unit_data.id,
 		team_side,
-		_master_home_coord(team_side) if is_master else _default_deploy_home_coord(0, team_side),
+		_get_persistent_master_home_coord(team_side) if is_master else _default_deploy_home_coord(0, team_side),
 		is_master
 	)
 	_enqueue_respawn_request(request)
@@ -947,6 +1117,8 @@ func _materialize_respawn_request(request: RespawnRequest) -> BattleUnitState:
 		request.is_master,
 		request.home_coord
 	)
+	if request.is_master:
+		_set_persistent_master_home_coord(request.team_side, request.home_coord)
 	runtime_units.append(state)
 	return state
 
@@ -987,11 +1159,56 @@ func _refresh_race_synergy_state(log_changes: bool) -> void:
 	if log_changes and enemy_synergy_summary != previous_enemy_summary:
 		print("Racas do inimigo em campo: %s" % enemy_synergy_summary)
 
+	_refresh_deck_passive_state(log_changes)
 	_refresh_inspected_unit_panel()
 	_emit_hud_update()
 
+func _refresh_deck_passive_state(log_changes: bool) -> void:
+	var player_passive_units: Array[String] = []
+	var enemy_passive_units: Array[String] = []
+
+	for unit_state in runtime_units:
+		if unit_state == null:
+			continue
+		unit_state.clear_deck_passive_modifiers()
+
+	if board_grid == null:
+		return
+
+	for unit_state in runtime_units:
+		if unit_state == null or not unit_state.can_act():
+			continue
+		if unit_state.unit_data == null or unit_state.unit_data.id != "thrax_master":
+			continue
+		for coord in board_grid.get_adjacent_coords(unit_state.coord):
+			var ally: BattleUnitState = board_grid.get_unit_at(coord)
+			if ally == null or not ally.can_act():
+				continue
+			if ally.team_side != unit_state.team_side or ally == unit_state:
+				continue
+			var base_attack: int = ally.unit_data.physical_attack + ally.get_race_physical_attack_bonus() + ally.get_class_physical_attack_bonus() + ally.synergy_physical_attack + ally.bonus_physical_attack
+			var aura_bonus: int = maxi(1, int(round(float(maxi(0, base_attack)) * THRAX_ADJACENCY_ATTACK_RATIO)))
+			ally.deck_passive_physical_attack = maxi(ally.deck_passive_physical_attack, aura_bonus)
+			var label: String = "%s (+%d ATQ F)" % [ally.get_display_name(), aura_bonus]
+			if ally.team_side == GameEnums.TeamSide.PLAYER:
+				player_passive_units.append(label)
+			else:
+				enemy_passive_units.append(label)
+
+	for unit_state in runtime_units:
+		if unit_state == null:
+			continue
+		_refresh_actor_state(unit_state)
+
+	if log_changes and not player_passive_units.is_empty():
+		print("Presenca do Rei (jogador): %s" % _join_strings(player_passive_units))
+	if log_changes and not enemy_passive_units.is_empty():
+		print("Presenca do Rei (inimigo): %s" % _join_strings(enemy_passive_units))
+
 func _confirm_start_battle(force_auto_start: bool = false) -> void:
 	if _battle_running or current_state != GameEnums.BattleState.PREP:
+		return
+	if card_shop_open:
 		return
 	if input_locked and not force_auto_start:
 		return
@@ -1006,6 +1223,10 @@ func _confirm_start_battle(force_auto_start: bool = false) -> void:
 		print("BATALHA seguindo so com o mestre: nenhum slot de deploy pronto no PREP")
 
 	_set_input_locked(true)
+	card_shop_open = false
+	pending_card_shop_paths.clear()
+	if battle_hud:
+		battle_hud.hide_card_shop()
 	_commit_player_prep_formation()
 	_clear_inspected_context()
 	_clear_support_selection(false)
@@ -1033,7 +1254,10 @@ func _start_auto_battle() -> void:
 		await get_tree().create_timer(BattleConfig.REVEAL_TRANSITION_SECONDS).timeout
 
 	_set_input_locked(false)
+	if lobby_manager.begin_live_tables_battle(current_round):
+		_emit_hud_update()
 	_apply_bone_prison_opening()
+	_apply_opening_reposition_effects()
 	_set_match_phase(GameEnums.MatchPhase.ROUND_BATTLE)
 	start_battle()
 	print("BATALHA iniciada: rodada=%d oponente=%s" % [current_round, _current_opponent_display_name()])
@@ -1135,16 +1359,13 @@ func _finish_round(winner_team: int, survivor_count: int) -> void:
 		last_round_result_summary = "Ult. rodada  Empate | Sobreviventes 0 | Sem dano global"
 	_emit_hud_update()
 
+	_resolve_local_round_reward_cards(winner_team, survivor_count)
 	_remove_dead_runtime_units()
 	_sync_lobby_life_values(false)
 	_sync_runtime_board_snapshots(_match_phase_name())
-	var background_results: Array[Dictionary] = lobby_manager.resolve_background_pairings(
-		round_manager.get_current_pairings(),
-		current_round,
-		[LOCAL_PLAYER_ID]
-	)
+	var background_results: Array[Dictionary] = lobby_manager.force_finish_live_tables(current_round)
 	for result in background_results:
-		print("LOBBY background result: %s" % str(result.get("result_text", "resultado resolvido")))
+		print("LOBBY mesa viva: %s" % str(result.get("result_text", "resultado resolvido")))
 	_emit_hud_update()
 	var local_player: MatchPlayerState = lobby_manager.get_player(LOCAL_PLAYER_ID)
 	var opponent_player: MatchPlayerState = lobby_manager.get_player(current_opponent_player_id)
@@ -1164,6 +1385,41 @@ func _finish_round(winner_team: int, survivor_count: int) -> void:
 	current_round += 1
 	print("Iniciando proxima rodada: %d" % current_round)
 	_start_prep_phase()
+
+func _resolve_local_round_reward_cards(winner_team: int, survivor_count: int) -> void:
+	var won_round: bool = winner_team == GameEnums.TeamSide.PLAYER or winner_team == GameEnums.TeamSide.ENEMY
+	if not won_round:
+		return
+	var winner_state: MatchPlayerState = _get_player_state_for_team(winner_team)
+	var loser_team: int = GameEnums.TeamSide.ENEMY if winner_team == GameEnums.TeamSide.PLAYER else GameEnums.TeamSide.PLAYER
+	var loser_state: MatchPlayerState = _get_player_state_for_team(loser_team)
+	if winner_state == null:
+		return
+
+	var gained_lines: Array[String] = []
+	var pending_bonus_gold: int = pending_player_bonus_gold_on_win if winner_team == GameEnums.TeamSide.PLAYER else pending_enemy_bonus_gold_on_win
+	if pending_bonus_gold > 0:
+		winner_state.banked_gold += pending_bonus_gold
+		gained_lines.append("+%d ouro futuro" % pending_bonus_gold)
+		print("OURO: %s ganhou +%d de ouro futuro" % [
+			winner_state.display_name,
+			pending_bonus_gold,
+		])
+
+	var pending_tribute_steal: int = pending_player_tribute_steal_on_win if winner_team == GameEnums.TeamSide.PLAYER else pending_enemy_tribute_steal_on_win
+	if pending_tribute_steal > 0 and survivor_count > 0 and loser_state != null and loser_state.banked_gold > 0:
+		var stolen: int = mini(loser_state.banked_gold, pending_tribute_steal)
+		loser_state.banked_gold -= stolen
+		winner_state.banked_gold += stolen
+		gained_lines.append("tributo %+d" % stolen)
+		print("TRIBUTO: %s roubou %d de ouro futuro de %s" % [
+			winner_state.display_name,
+			stolen,
+			loser_state.display_name,
+		])
+
+	if not gained_lines.is_empty():
+		last_round_result_summary += " | " + _join_strings(gained_lines)
 
 func _emit_global_life_changed(team_side: int, value: int) -> void:
 	var signal_bus: Node = _get_signal_bus()
@@ -1200,62 +1456,23 @@ func _match_phase_name() -> String:
 		_:
 			return "DESCONHECIDO"
 
-func _selection_label() -> String:
-	if drag_mode == DRAG_MODE_DEPLOY_SLOT and drag_slot_index >= 0 and drag_slot_index < player_deploy_pool.size():
-		return "Arrastando %s" % player_deploy_pool[drag_slot_index].unit_data.display_name
-	if drag_mode == DRAG_MODE_BOARD_UNIT and drag_unit != null:
-		return "Arrastando %s" % drag_unit.get_combat_label()
-	if selected_support_index >= 0 and selected_support_index < player_support_pool.size():
-		var support_option: SupportOption = player_support_pool[selected_support_index]
-		return "Suporte %s (custo %d, ARMADO)" % [
-			support_option.card_data.display_name,
-			support_option.card_data.cost,
-		]
-
-	if selected_deploy_index < 0 or selected_deploy_index >= player_deploy_pool.size():
-		return "Nenhuma"
-
-	var option: DeployOption = player_deploy_pool[selected_deploy_index]
-	var status: String = "USADO" if option.used else "PRONTO"
-	return "%d:%s (custo %d, %s)" % [
-		selected_deploy_index + 1,
-		option.unit_data.display_name,
-		option.unit_data.cost,
-		status,
-	]
-
-func _prep_timer_label() -> String:
-	if current_match_phase != GameEnums.MatchPhase.ROUND_PREP:
-		return "-"
-	return "%ds" % int(ceil(prep_time_remaining))
-
-func _hud_focus_label() -> String:
-	return "Selecao      %s\nOponente     %s | Preparo %s" % [
-		_selection_label(),
-		_current_opponent_display_name(),
-		_prep_timer_label(),
-	]
-
 func _emit_hud_update() -> void:
 	_sync_runtime_board_snapshots(_match_phase_name())
 	hud_update_requested.emit(
 		current_round,
 		player_global_life,
-		enemy_global_life,
-		energy_current,
+		gold_current,
 		"%s / %s" % [_match_phase_name(), _state_name()],
-		_hud_focus_label(),
-		player_synergy_summary,
-		last_round_result_summary
+		_current_opponent_display_name()
 	)
 	if battle_hud:
 		battle_hud.update_player_sidebar(_build_player_sidebar_entries())
 		if not observed_player_id.is_empty():
 			var observed_snapshot: Dictionary = lobby_manager.get_board_snapshot(observed_player_id)
 			if observed_snapshot.is_empty():
-				observed_player_id = ""
-				battle_hud.clear_unit_info()
+				_clear_observed_board_preview()
 			else:
+				_show_observed_board_preview_only(observed_snapshot)
 				battle_hud.update_observed_board(observed_snapshot)
 
 func _build_player_sidebar_entries() -> Array[Dictionary]:
@@ -1311,44 +1528,78 @@ func _store_runtime_board_snapshot(player_id: String, team_side: int, phase_labe
 	var units: Array[Dictionary] = []
 	var total_power: int = 0
 	var master_name: String = "Sem mestre"
+	var opponent_master_name: String = "Sem mestre"
+	var non_master_count: int = 0
+	var enemy_unit_count: int = 0
+	var opponent_player_id: String = LOCAL_PLAYER_ID if team_side == GameEnums.TeamSide.ENEMY else current_opponent_player_id
+	var opponent_player: MatchPlayerState = lobby_manager.get_player(opponent_player_id)
 	for unit_state in runtime_units:
 		if unit_state == null or not unit_state.can_act():
 			continue
-		if unit_state.team_side != team_side:
-			continue
 
 		var preview_coord: Vector2i = _coord_for_snapshot_perspective(unit_state.coord, team_side)
+		var relative_team_side: int = GameEnums.TeamSide.PLAYER if unit_state.team_side == team_side else GameEnums.TeamSide.ENEMY
+		var unit_path: String = ""
+		if unit_state.unit_data != null and not unit_state.unit_data.resource_path.is_empty():
+			unit_path = unit_state.unit_data.resource_path
 		var unit_entry: Dictionary = {
 			"unit_id": unit_state.unit_data.id if unit_state.unit_data != null else "",
+			"unit_path": unit_path,
 			"display_name": unit_state.get_display_name(),
 			"coord": preview_coord,
+			"team_side": relative_team_side,
 			"is_master": unit_state.is_master,
 			"class_label": unit_state.get_class_name(),
 			"race_name": unit_state.get_race_name(),
 			"cost": unit_state.unit_data.cost if unit_state.unit_data != null else 0,
+			"current_hp": unit_state.current_hp,
+			"max_hp": unit_state.unit_data.max_hp if unit_state.unit_data != null else 0,
+			"current_mana": unit_state.current_mana,
+			"mana_max": unit_state.get_mana_max(),
+			"physical_attack": unit_state.get_physical_attack_value(),
+			"magic_attack": unit_state.get_magic_attack_value(),
+			"physical_defense": unit_state.get_physical_defense_value(),
+			"magic_defense": unit_state.get_magic_defense_value(),
+			"attack_range": unit_state.get_attack_range(),
+			"crit_chance": unit_state.get_crit_chance(),
+			"mana_gain_on_attack": unit_state.get_mana_gain_on_attack(),
+			"mana_gain_on_hit": unit_state.get_mana_gain_on_hit(),
 		}
-		if unit_state.is_master:
+		if unit_state.is_master and relative_team_side == GameEnums.TeamSide.PLAYER:
 			units.insert(0, unit_entry)
 			master_name = unit_state.get_display_name()
+		elif unit_state.is_master and relative_team_side == GameEnums.TeamSide.ENEMY:
+			units.append(unit_entry)
+			opponent_master_name = unit_state.get_display_name()
 		else:
 			units.append(unit_entry)
+			if relative_team_side == GameEnums.TeamSide.PLAYER:
+				non_master_count += 1
+			else:
+				enemy_unit_count += 1
 		total_power += _estimate_runtime_unit_power(unit_state)
 
-	var energy_value: int = energy_current if team_side == GameEnums.TeamSide.PLAYER else enemy_energy_current
+	var gold_value: int = gold_current if team_side == GameEnums.TeamSide.PLAYER else enemy_gold_current
 	var life_value: int = player_global_life if team_side == GameEnums.TeamSide.PLAYER else enemy_global_life
 	var snapshot: Dictionary = {
 		"player_id": player_id,
 		"player_name": player_state.display_name,
+		"opponent_id": opponent_player_id,
+		"opponent_name": opponent_player.display_name if opponent_player != null else "Sem oponente",
 		"round_number": current_round,
 		"phase": phase_label,
 		"life": life_value,
-		"energy": BattleConfig.STARTING_ENERGY + ((current_round - 1) * BattleConfig.ENERGY_PER_ROUND),
-		"energy_budget": maxi(0, energy_value),
+		"gold": BattleConfig.STARTING_GOLD + ((current_round - 1) * BattleConfig.GOLD_PER_ROUND),
+		"gold_budget": maxi(0, gold_value),
 		"units": units,
 		"unit_count": units.size(),
-		"non_master_count": maxi(0, units.size() - 1),
+		"non_master_count": non_master_count,
+		"enemy_unit_count": enemy_unit_count,
 		"power_rating": total_power,
 		"master_name": master_name,
+		"opponent_master_name": opponent_master_name,
+		"owned_card_count": player_state.get_owned_card_paths().size(),
+		"owned_card_names": _card_names_from_paths(player_state.get_owned_card_paths()),
 		"summary": _runtime_snapshot_summary(units),
 		"result_text": player_state.last_round_result_text,
 	}
@@ -1358,6 +1609,15 @@ func _coord_for_snapshot_perspective(coord: Vector2i, team_side: int) -> Vector2
 	if team_side == GameEnums.TeamSide.ENEMY:
 		return Vector2i(coord.x, BattleConfig.BOARD_HEIGHT - 1 - coord.y)
 	return coord
+
+func _card_names_from_paths(card_paths: Array[String]) -> Array[String]:
+	var names: Array[String] = []
+	for card_path in card_paths:
+		var card_data: CardData = _load_card_data(card_path)
+		if card_data == null:
+			continue
+		names.append(card_data.display_name)
+	return names
 
 func _estimate_runtime_unit_power(unit_state: BattleUnitState) -> int:
 	if unit_state == null or unit_state.unit_data == null:
@@ -1421,14 +1681,13 @@ func _build_deploy_slot_view_data(option: DeployOption) -> Dictionary:
 func _build_support_slot_view_data(option: SupportOption) -> Dictionary:
 	var state: Dictionary = _get_player_support_option_state(option)
 	var card_name: String = "Suporte desconhecido"
-	var card_cost: int = 0
 	if option != null and option.card_data != null:
 		card_name = option.card_data.display_name
-		card_cost = option.card_data.cost
 
 	return {
 		"name": card_name,
-		"cost": card_cost,
+		"cost": 0,
+		"cost_label": "Gratis",
 		"used": str(state.get("status", "UNAVAILABLE")) == "USED",
 		"affordable": bool(state.get("available", false)),
 		"status": str(state.get("status", "UNAVAILABLE")),
@@ -1441,10 +1700,10 @@ func _get_player_deploy_option_state(option: DeployOption) -> Dictionary:
 		return {"status": "UNAVAILABLE", "reason": "dados da unidade ausentes", "available": false}
 	if option.used:
 		return {"status": "USED", "reason": "slot ja foi usado nesta rodada", "available": false}
-	if energy_current < option.unit_data.cost:
+	if gold_current < option.unit_data.cost:
 		return {
-			"status": "NO ENERGY",
-			"reason": "custo %d > energia %d" % [option.unit_data.cost, energy_current],
+			"status": "NO GOLD",
+			"reason": "custo %d > ouro %d" % [option.unit_data.cost, gold_current],
 			"available": false,
 		}
 	if not _has_valid_player_deploy_target(option):
@@ -1458,12 +1717,6 @@ func _get_player_support_option_state(option: SupportOption) -> Dictionary:
 		return {"status": "UNAVAILABLE", "reason": "dados do support ausentes", "available": false}
 	if option.used:
 		return {"status": "USED", "reason": "support ja foi usado nesta rodada", "available": false}
-	if energy_current < option.card_data.cost:
-		return {
-			"status": "NO ENERGY",
-			"reason": "custo %d > energia %d" % [option.card_data.cost, energy_current],
-			"available": false,
-		}
 	if not _has_valid_support_target(option.card_data):
 		return {
 			"status": "UNAVAILABLE",
@@ -1510,25 +1763,23 @@ func _log_loaded_deck(label: String, deck_data: DeckData) -> void:
 	print("%s deck loaded: id=%s master=%s units=%d supports=%d" % [
 		label,
 		deck_data.id,
-		deck_data.master_unit_path,
-		deck_data.unit_paths.size(),
-		deck_data.support_card_paths.size(),
+		deck_data.master_data_path,
+		deck_data.unit_pool_paths.size(),
+		deck_data.card_pool_paths.size(),
 	])
-	if deck_data.unit_paths.is_empty():
+	if deck_data.unit_pool_paths.is_empty():
 		push_warning("BattleManager: %s deck has no deployable unit paths" % label)
-	if deck_data.support_card_paths.is_empty():
-		push_warning("BattleManager: %s deck has no support card paths" % label)
+	if deck_data.card_pool_paths.is_empty():
+		push_warning("BattleManager: %s deck has no card pool paths" % label)
 
 func _log_player_prep_pool_state() -> void:
-	print("Pool do PREP do jogador: deploy_slots=%d support_slots=%d ready_deploy=%d" % [
+	print("Pool do PREP do jogador: deploy_slots=%d card_slots=%d ready_deploy=%d" % [
 		player_deploy_pool.size(),
 		player_support_pool.size(),
 		_count_ready_player_deploy_slots(),
 	])
 	if player_deploy_pool.is_empty():
 		push_warning("BattleManager: player deploy pool is empty in PREP")
-	if player_support_pool.is_empty():
-		push_warning("BattleManager: player support pool is empty in PREP")
 
 func _load_unit_data(path: String) -> UnitData:
 	var loaded: Resource = load(path)
@@ -1551,8 +1802,8 @@ func _build_player_deploy_pool() -> void:
 	if player_deck == null:
 		return
 
-	for index in range(player_deck.unit_paths.size()):
-		var path: String = player_deck.unit_paths[index]
+	for index in range(player_deck.unit_pool_paths.size()):
+		var path: String = player_deck.unit_pool_paths[index]
 		var unit_data: UnitData = _load_unit_data(path)
 		if unit_data != null:
 			player_deploy_pool.append(DeployOption.new(
@@ -1568,8 +1819,8 @@ func _build_enemy_deploy_pool() -> void:
 	if enemy_deck == null:
 		return
 
-	for index in range(enemy_deck.unit_paths.size()):
-		var path: String = enemy_deck.unit_paths[index]
+	for index in range(enemy_deck.unit_pool_paths.size()):
+		var path: String = enemy_deck.unit_pool_paths[index]
 		var unit_data: UnitData = _load_unit_data(path)
 		if unit_data != null:
 			enemy_deploy_pool.append(DeployOption.new(
@@ -1582,13 +1833,123 @@ func _build_enemy_deploy_pool() -> void:
 
 func _build_player_support_pool() -> void:
 	player_support_pool.clear()
-	if player_deck == null:
+	var local_player: MatchPlayerState = lobby_manager.get_player(LOCAL_PLAYER_ID)
+	if local_player == null:
 		return
 
-	for path in player_deck.support_card_paths:
+	for path in local_player.get_owned_card_paths():
 		var card_data: CardData = _load_card_data(path)
 		if card_data != null:
 			player_support_pool.append(SupportOption.new(card_data, path))
+
+func _maybe_open_periodic_card_shop() -> void:
+	if current_round <= 0 or current_round % 3 != 0:
+		return
+
+	var local_player: MatchPlayerState = lobby_manager.get_player(LOCAL_PLAYER_ID)
+	if local_player == null:
+		return
+	if local_shop_ui_round_claimed >= current_round:
+		return
+
+	pending_card_shop_paths = _build_local_card_shop_offer(current_round)
+	if pending_card_shop_paths.is_empty():
+		local_shop_ui_round_claimed = current_round
+		local_player.last_shop_round_claimed = current_round
+		return
+
+	card_shop_open = true
+	selected_support_index = -1
+	selected_deploy_index = -1
+	_clear_drag_state()
+	_clear_support_selection(false)
+	input_locked = true
+
+	var option_entries: Array[Dictionary] = []
+	for card_path in pending_card_shop_paths:
+		var card_data: CardData = _load_card_data(card_path)
+		if card_data == null:
+			continue
+		option_entries.append({
+			"card_path": card_path,
+			"card_data": card_data,
+		})
+
+	if option_entries.is_empty():
+		card_shop_open = false
+		local_shop_ui_round_claimed = current_round
+		local_player.last_shop_round_claimed = current_round
+		return
+
+	if battle_hud:
+		battle_hud.show_card_shop(current_round, option_entries)
+	else:
+		_on_card_shop_option_selected(str(option_entries[0].get("card_path", "")))
+		return
+
+	_refresh_deploy_bar()
+	_emit_hud_update()
+	print("LOJA DA PARTIDA: rodada=%d oferta=%s" % [
+		current_round,
+		_join_strings(pending_card_shop_paths),
+	])
+
+func _on_card_shop_option_selected(card_path: String) -> void:
+	if not card_shop_open:
+		return
+	if card_path.is_empty():
+		return
+	if not pending_card_shop_paths.has(card_path):
+		return
+
+	var local_player: MatchPlayerState = lobby_manager.get_player(LOCAL_PLAYER_ID)
+	if local_player == null:
+		return
+
+	var added: bool = lobby_manager.add_owned_card_to_player(LOCAL_PLAYER_ID, card_path, current_round)
+	local_shop_ui_round_claimed = current_round
+	card_shop_open = false
+	pending_card_shop_paths.clear()
+	input_locked = false
+	if battle_hud:
+		battle_hud.hide_card_shop()
+
+	_build_player_support_pool()
+	_refresh_deploy_bar()
+	_emit_hud_update()
+
+	var chosen_card: CardData = _load_card_data(card_path)
+	print("LOJA DA PARTIDA: %s %s" % [
+		"carta adicionada" if added else "carta mantida",
+		chosen_card.display_name if chosen_card != null else card_path,
+	])
+
+func _build_local_card_shop_offer(round_number: int) -> Array[String]:
+	var offer_paths: Array[String] = lobby_manager.build_card_shop_offer(LOCAL_PLAYER_ID, round_number)
+	if not offer_paths.is_empty():
+		return offer_paths
+
+	lobby_manager.set_player_deck_path(LOCAL_PLAYER_ID, _selected_player_deck_path(), false)
+	offer_paths = lobby_manager.build_card_shop_offer(LOCAL_PLAYER_ID, round_number)
+	if not offer_paths.is_empty():
+		return offer_paths
+
+	var local_player: MatchPlayerState = lobby_manager.get_player(LOCAL_PLAYER_ID)
+	if local_player == null or player_deck == null:
+		return []
+
+	var fallback_paths: Array[String] = []
+	for card_path in player_deck.card_pool_paths:
+		var resolved_path: String = str(card_path)
+		if resolved_path.is_empty():
+			continue
+		if local_player.has_owned_card_path(resolved_path):
+			continue
+		fallback_paths.append(resolved_path)
+	fallback_paths.sort()
+	if fallback_paths.size() > 2:
+		fallback_paths.resize(2)
+	return fallback_paths
 
 func _mark_pool_used_from_living_player_units() -> void:
 	_mark_pool_used_from_living_team_units(player_deploy_pool, GameEnums.TeamSide.PLAYER)
@@ -1638,7 +1999,10 @@ func _spawn_roster_unit(
 
 	var resolved_home_coord: Vector2i = home_coord
 	if resolved_home_coord == Vector2i(-1, -1):
-		resolved_home_coord = preferred_coord if board_grid.is_valid_coord(preferred_coord) else _master_home_coord(team_side)
+		if is_master:
+			resolved_home_coord = _get_persistent_master_home_coord(team_side)
+		if resolved_home_coord == Vector2i(-1, -1):
+			resolved_home_coord = preferred_coord if board_grid.is_valid_coord(preferred_coord) else _master_home_coord(team_side)
 
 	var spawn_coord: Vector2i = preferred_coord
 	if not board_grid.is_valid_coord(spawn_coord) or not board_grid.is_cell_free(spawn_coord):
@@ -1658,6 +2022,8 @@ func _spawn_roster_unit(
 		push_warning("BattleManager: failed to spawn %s at %s" % [unit_data.id, spawn_coord])
 		return null
 
+	if is_master:
+		_set_persistent_master_home_coord(team_side, resolved_home_coord)
 	runtime_units.append(state)
 	print("Home coord registered: %s -> %s" % [state.get_combat_label(), state.home_coord])
 	return state
@@ -1769,13 +2135,15 @@ func _remove_dead_runtime_units() -> void:
 func _on_deploy_slot_pressed(slot_index: int) -> void:
 	if current_state != GameEnums.BattleState.PREP:
 		return
+	if card_shop_open or _is_observer_mode_active():
+		return
 	_begin_deploy_drag(slot_index)
 
 func _on_deploy_slot_right_clicked(slot_index: int) -> void:
 	if slot_index < 0 or slot_index >= player_deploy_pool.size():
 		return
 
-	observed_player_id = ""
+	_exit_observer_mode_if_needed(false)
 	inspected_unit = null
 	inspected_deploy_index = slot_index
 	inspected_support_index = -1
@@ -1784,19 +2152,23 @@ func _on_deploy_slot_right_clicked(slot_index: int) -> void:
 func _on_support_slot_pressed(slot_index: int) -> void:
 	if current_state != GameEnums.BattleState.PREP:
 		return
+	if card_shop_open or _is_observer_mode_active():
+		return
 	_select_support_slot(slot_index)
 
 func _on_support_slot_right_clicked(slot_index: int) -> void:
 	if slot_index < 0 or slot_index >= player_support_pool.size():
 		return
 
-	observed_player_id = ""
+	_exit_observer_mode_if_needed(false)
 	inspected_unit = null
 	inspected_deploy_index = -1
 	inspected_support_index = slot_index
 	_refresh_inspected_unit_panel()
 
 func _select_deploy_slot(index: int) -> void:
+	if card_shop_open or _is_observer_mode_active():
+		return
 	if index < 0 or index >= player_deploy_pool.size():
 		print("Selecao de deploy bloqueada: slot %d indisponivel (pool=%d)" % [index + 1, player_deploy_pool.size()])
 		return
@@ -1816,14 +2188,16 @@ func _select_deploy_slot(index: int) -> void:
 	_set_selected_prep_unit(null)
 	_refresh_deploy_bar()
 	_emit_hud_update()
-	print("Deploy selecionado: slot=%d unidade=%s custo=%d energia=%d" % [
+	print("Deploy selecionado: slot=%d unidade=%s custo=%d ouro=%d" % [
 		index + 1,
 		option.unit_data.id,
 		option.unit_data.cost,
-		energy_current,
+		gold_current,
 	])
 
 func _select_support_slot(index: int) -> void:
+	if card_shop_open or _is_observer_mode_active():
+		return
 	if drag_mode != DRAG_MODE_NONE:
 		print("Selecao de support bloqueada: finalize o arraste atual primeiro")
 		return
@@ -1861,16 +2235,27 @@ func _select_support_slot(index: int) -> void:
 	_refresh_deploy_bar()
 	_refresh_targeting_preview()
 	_emit_hud_update()
-	print("Support armado: slot=%d carta=%s custo=%d energia=%d" % [
+	print("Support armado: slot=%d carta=%s gratis ouro=%d" % [
 		index + 1,
 		option.card_data.display_name,
-		option.card_data.cost,
-		energy_current,
+		gold_current,
 	])
 	print("Alvos de support prontos: %d celulas destacadas" % valid_target_count)
 
 func _support_card_is_instant(card_data: CardData) -> bool:
-	return card_data != null and card_data.support_effect_type == GameEnums.SupportCardEffectType.DELAYED_BLIND_FIELD
+	if card_data == null:
+		return false
+	match card_data.support_effect_type:
+		GameEnums.SupportCardEffectType.DELAYED_BLIND_FIELD:
+			return true
+		GameEnums.SupportCardEffectType.CONDITIONAL_NEXT_ROUND_GOLD:
+			return true
+		GameEnums.SupportCardEffectType.CONDITIONAL_TRIBUTE_STEAL:
+			return true
+		GameEnums.SupportCardEffectType.OPENING_REPOSITION:
+			return true
+		_:
+			return false
 
 func _support_card_requires_cell_target(card_data: CardData) -> bool:
 	return card_data != null and card_data.support_effect_type == GameEnums.SupportCardEffectType.CELL_TRAP_STUN
@@ -1893,8 +2278,8 @@ func _can_deploy_option_to_coord(option: DeployOption, coord: Vector2i) -> Dicti
 		return {"ok": false, "reason": "celula alvo ocupada"}
 	if _count_non_master_units(GameEnums.TeamSide.PLAYER) >= BattleConfig.MAX_FIELD_UNITS:
 		return {"ok": false, "reason": "limite de unidades do jogador atingido"}
-	if energy_current < option.unit_data.cost:
-		return {"ok": false, "reason": "energia insuficiente"}
+	if gold_current < option.unit_data.cost:
+		return {"ok": false, "reason": "ouro insuficiente"}
 	return {"ok": true, "reason": ""}
 
 func _can_enemy_deploy_option_to_coord(option: DeployOption, coord: Vector2i) -> Dictionary:
@@ -1906,8 +2291,8 @@ func _can_enemy_deploy_option_to_coord(option: DeployOption, coord: Vector2i) ->
 		return {"ok": false, "reason": "celula alvo ocupada"}
 	if _count_non_master_units(GameEnums.TeamSide.ENEMY) >= BattleConfig.MAX_FIELD_UNITS:
 		return {"ok": false, "reason": "limite de unidades inimigas atingido"}
-	if enemy_energy_current < option.unit_data.cost:
-		return {"ok": false, "reason": "energia inimiga insuficiente"}
+	if enemy_gold_current < option.unit_data.cost:
+		return {"ok": false, "reason": "ouro inimigo insuficiente"}
 	return {"ok": true, "reason": ""}
 
 func _deploy_slot_to_coord(slot_index: int, coord: Vector2i) -> bool:
@@ -1936,14 +2321,14 @@ func _deploy_slot_to_coord(slot_index: int, coord: Vector2i) -> bool:
 
 	runtime_units.append(state)
 	option.used = true
-	energy_current -= option.unit_data.cost
+	gold_current -= option.unit_data.cost
 	_remove_value(player_units_sold_last_round, state.get_combat_label())
 	print("Home coord registered: %s -> %s" % [state.get_combat_label(), state.home_coord])
 
-	print("Deploy concluido: %s em %s | energia_restante=%d" % [
+	print("Deploy concluido: %s em %s | ouro_restante=%d" % [
 		state.get_combat_label(),
 		coord,
-		energy_current,
+		gold_current,
 	])
 	_refresh_race_synergy_state(false)
 	_refresh_targeting_preview()
@@ -1973,11 +2358,11 @@ func _deploy_enemy_slot_to_coord(slot_index: int, coord: Vector2i) -> bool:
 
 	runtime_units.append(state)
 	option.used = true
-	enemy_energy_current -= option.unit_data.cost
-	print("Deploy inimigo: %s em %s | energia_inimiga_restante=%d" % [
+	enemy_gold_current -= option.unit_data.cost
+	print("Deploy inimigo: %s em %s | ouro_inimigo_restante=%d" % [
 		state.get_combat_label(),
 		coord,
-		enemy_energy_current,
+		enemy_gold_current,
 	])
 	return true
 
@@ -1988,19 +2373,19 @@ func _auto_prepare_enemy_board() -> void:
 	var deploy_plan: Dictionary = enemy_prep_planner.build_deploy_orders(
 		board_grid,
 		enemy_deploy_pool,
-		enemy_energy_current,
+		enemy_gold_current,
 		_count_non_master_units(GameEnums.TeamSide.ENEMY),
 		BattleConfig.MAX_FIELD_UNITS,
 		current_round
 	)
 	var deploy_orders: Array[Dictionary] = deploy_plan.get("orders", [])
 	var enemy_field_limit: int = int(deploy_plan.get("field_limit", BattleConfig.MAX_FIELD_UNITS))
-	var enemy_energy_budget: int = int(deploy_plan.get("energy_budget", enemy_energy_current))
+	var enemy_gold_budget: int = int(deploy_plan.get("gold_budget", enemy_gold_current))
 	if bool(deploy_plan.get("fairness_active", false)):
-		print("Justica do PREP inimigo ativa: rodada=%d limite_de_campo=%d energia_efetiva=%d" % [
+		print("Justica do PREP inimigo ativa: rodada=%d limite_de_campo=%d ouro_efetivo=%d" % [
 			current_round,
 			enemy_field_limit,
-			enemy_energy_budget,
+			enemy_gold_budget,
 		])
 	for order in deploy_orders:
 		_deploy_enemy_slot_to_coord(
@@ -2009,6 +2394,97 @@ func _auto_prepare_enemy_board() -> void:
 		)
 
 	print("PREP automatico do inimigo: %d deploys aplicados" % deploy_orders.size())
+
+func _auto_use_enemy_support_cards() -> void:
+	var opponent_state: MatchPlayerState = lobby_manager.get_player(current_opponent_player_id)
+	if opponent_state == null:
+		return
+
+	for card_path in opponent_state.get_owned_card_paths():
+		var card_data: CardData = _load_card_data(card_path)
+		if card_data == null:
+			continue
+		if _support_card_is_instant(card_data):
+			_apply_instant_support_card_effect_for_team(card_data, GameEnums.TeamSide.ENEMY)
+			print("PREP inimigo usou support instantaneo gratis: %s" % card_data.display_name)
+			continue
+		if _support_card_requires_cell_target(card_data):
+			var target_coord: Vector2i = _auto_pick_support_coord_for_team(card_data, GameEnums.TeamSide.ENEMY)
+			if not board_grid.is_valid_coord(target_coord):
+				continue
+			_apply_support_card_effect_on_coord_for_team(card_data, target_coord, GameEnums.TeamSide.ENEMY)
+			print("PREP inimigo usou support de celula gratis: %s em %s" % [
+				card_data.display_name,
+				target_coord,
+			])
+			continue
+		var target_unit: BattleUnitState = _auto_pick_support_target_for_team(card_data, GameEnums.TeamSide.ENEMY)
+		if target_unit == null:
+			continue
+		_apply_support_card_effect_for_team(card_data, target_unit, GameEnums.TeamSide.ENEMY)
+		print("PREP inimigo usou support gratis: %s em %s" % [
+			card_data.display_name,
+			target_unit.get_combat_label(),
+		])
+
+func _auto_pick_support_target_for_team(card_data: CardData, owner_team_side: int) -> BattleUnitState:
+	if card_data == null:
+		return null
+	var best_target: BattleUnitState = null
+	var best_score: int = -100000
+	for unit_state in runtime_units:
+		if unit_state == null or not unit_state.can_act():
+			continue
+		if unit_state.team_side != owner_team_side:
+			continue
+		var score: int = unit_state.current_hp
+		match card_data.support_effect_type:
+			GameEnums.SupportCardEffectType.PLAYER_LIFE_HEAL:
+				if unit_state.is_master:
+					return unit_state
+				continue
+			GameEnums.SupportCardEffectType.UNIT_ATTACK_BUFF:
+				score += unit_state.get_physical_attack_value() * 10
+			GameEnums.SupportCardEffectType.MAGIC_ATTACK_MULTIPLIER:
+				score += unit_state.get_magic_attack_value() * 12
+			GameEnums.SupportCardEffectType.START_STEALTH:
+				score += unit_state.get_physical_attack_value() * 9
+				if unit_state.is_master:
+					score -= 25
+			GameEnums.SupportCardEffectType.DEATH_MANA_PACT:
+				if unit_state.unit_data != null:
+					score += unit_state.unit_data.max_hp * 4
+				if unit_state.is_master:
+					score -= 18
+			GameEnums.SupportCardEffectType.PHYSICAL_DEFENSE_RATIO_BUFF:
+				score += unit_state.get_physical_defense_value() * 10
+			GameEnums.SupportCardEffectType.PHYSICAL_ATTACK_RANGE_BUFF:
+				score += unit_state.get_physical_attack_value() * 12
+			_:
+				score += unit_state.get_attack_value() * 4
+		if best_target == null or score > best_score:
+			best_target = unit_state
+			best_score = score
+	return best_target
+
+func _auto_pick_support_coord_for_team(card_data: CardData, owner_team_side: int) -> Vector2i:
+	if card_data == null:
+		return Vector2i(-1, -1)
+	var target_team_side: int = GameEnums.TeamSide.PLAYER if owner_team_side == GameEnums.TeamSide.ENEMY else GameEnums.TeamSide.ENEMY
+	var best_target: BattleUnitState = null
+	var best_score: int = -100000
+	for unit_state in runtime_units:
+		if unit_state == null or not unit_state.can_act():
+			continue
+		if unit_state.team_side != target_team_side:
+			continue
+		var score: int = unit_state.get_attack_value() * 10 + unit_state.current_hp
+		if best_target == null or score > best_score:
+			best_target = unit_state
+			best_score = score
+	if best_target != null:
+		return best_target.coord
+	return Vector2i(-1, -1)
 
 func _try_deploy_selected_at(coord: Vector2i) -> void:
 	if selected_deploy_index < 0 or selected_deploy_index >= player_deploy_pool.size():
@@ -2029,13 +2505,11 @@ func _try_use_selected_support_on_target(target: BattleUnitState) -> void:
 		_refresh_targeting_preview()
 		return
 
-	energy_current -= option.card_data.cost
 	option.used = true
 	_apply_support_card_effect(option.card_data, target)
-	print("Support usado: %s em %s | energia_restante=%d" % [
+	print("Support usado gratis: %s em %s" % [
 		option.card_data.display_name,
 		target.get_combat_label(),
-		energy_current,
 	])
 	selected_support_index = -1
 	if board_grid:
@@ -2055,13 +2529,11 @@ func _try_use_selected_support_on_coord(coord: Vector2i) -> void:
 		_refresh_targeting_preview()
 		return
 
-	energy_current -= option.card_data.cost
 	option.used = true
 	_apply_support_card_effect_on_coord(option.card_data, coord)
-	print("Support usado: %s na celula %s | energia_restante=%d" % [
+	print("Support usado gratis: %s na celula %s" % [
 		option.card_data.display_name,
 		coord,
-		energy_current,
 	])
 	selected_support_index = -1
 	if board_grid:
@@ -2075,16 +2547,10 @@ func _use_instant_support_card(option: SupportOption) -> bool:
 		return false
 	if option.used:
 		return false
-	if energy_current < option.card_data.cost:
-		return false
 
-	energy_current -= option.card_data.cost
 	option.used = true
 	_apply_instant_support_card_effect(option.card_data)
-	print("Support usado: %s | energia_restante=%d" % [
-		option.card_data.display_name,
-		energy_current,
-	])
+	print("Support usado gratis: %s" % option.card_data.display_name)
 	return true
 
 func _can_use_support_option_on_target(option: SupportOption, target: BattleUnitState) -> Dictionary:
@@ -2094,8 +2560,6 @@ func _can_use_support_option_on_target(option: SupportOption, target: BattleUnit
 		return {"ok": false, "reason": "support invalido"}
 	if option.used:
 		return {"ok": false, "reason": "support ja usado nesta rodada"}
-	if energy_current < option.card_data.cost:
-		return {"ok": false, "reason": "energia insuficiente"}
 	if target == null or not target.can_act():
 		return {"ok": false, "reason": "selecione um alvo vivo no tabuleiro"}
 	if target.team_side != GameEnums.TeamSide.PLAYER:
@@ -2116,6 +2580,10 @@ func _can_use_support_option_on_target(option: SupportOption, target: BattleUnit
 			return {"ok": true, "reason": ""}
 		GameEnums.SupportCardEffectType.DEATH_MANA_PACT:
 			return {"ok": true, "reason": ""}
+		GameEnums.SupportCardEffectType.PHYSICAL_DEFENSE_RATIO_BUFF:
+			return {"ok": true, "reason": ""}
+		GameEnums.SupportCardEffectType.PHYSICAL_ATTACK_RANGE_BUFF:
+			return {"ok": true, "reason": ""}
 		_:
 			return {"ok": false, "reason": "efeito de support nao suportado"}
 
@@ -2126,8 +2594,6 @@ func _can_use_support_option_on_coord(option: SupportOption, coord: Vector2i) ->
 		return {"ok": false, "reason": "support invalido"}
 	if option.used:
 		return {"ok": false, "reason": "support ja usado nesta rodada"}
-	if energy_current < option.card_data.cost:
-		return {"ok": false, "reason": "energia insuficiente"}
 	if not board_grid.is_valid_coord(coord):
 		return {"ok": false, "reason": "selecione uma celula valida no tabuleiro"}
 
@@ -2140,22 +2606,29 @@ func _can_use_support_option_on_coord(option: SupportOption, coord: Vector2i) ->
 			return {"ok": false, "reason": "efeito de support com celula nao suportado"}
 
 func _apply_support_card_effect(card_data: CardData, target: BattleUnitState) -> void:
+	_apply_support_card_effect_for_team(card_data, target, GameEnums.TeamSide.PLAYER)
+
+func _apply_support_card_effect_for_team(card_data: CardData, target: BattleUnitState, owner_team_side: int) -> void:
 	if card_data == null or target == null:
 		return
 
 	match card_data.support_effect_type:
 		GameEnums.SupportCardEffectType.PLAYER_LIFE_HEAL:
-			var before: int = player_global_life
-			player_global_life = mini(BattleConfig.GLOBAL_LIFE, player_global_life + card_data.global_life_heal)
-			var healed_life: int = player_global_life - before
-			_emit_global_life_changed(GameEnums.TeamSide.PLAYER, player_global_life)
+			var before: int = player_global_life if owner_team_side == GameEnums.TeamSide.PLAYER else enemy_global_life
+			if owner_team_side == GameEnums.TeamSide.PLAYER:
+				player_global_life = mini(BattleConfig.GLOBAL_LIFE, player_global_life + card_data.global_life_heal)
+			else:
+				enemy_global_life = mini(BattleConfig.GLOBAL_LIFE, enemy_global_life + card_data.global_life_heal)
+			var current_life: int = player_global_life if owner_team_side == GameEnums.TeamSide.PLAYER else enemy_global_life
+			var healed_life: int = current_life - before
+			_emit_global_life_changed(owner_team_side, current_life)
 			if target.actor:
 				target.actor.on_heal()
-			print("EFEITO DE SUPPORT: %s restaurou %d de vida global via %s (Vida do jogador: %d)" % [
+			print("EFEITO DE SUPPORT: %s restaurou %d de vida global via %s (Vida atual: %d)" % [
 				card_data.display_name,
 				healed_life,
 				target.get_combat_label(),
-				player_global_life,
+				current_life,
 			])
 		GameEnums.SupportCardEffectType.UNIT_ATTACK_BUFF:
 			target.add_round_stat_bonus(
@@ -2199,18 +2672,43 @@ func _apply_support_card_effect(card_data: CardData, target: BattleUnitState) ->
 				card_data.display_name,
 				target.get_combat_label(),
 			])
+		GameEnums.SupportCardEffectType.PHYSICAL_DEFENSE_RATIO_BUFF:
+			var defense_bonus: int = int(ceil(float(target.get_physical_defense_value()) * (card_data.physical_defense_multiplier - 1.0)))
+			target.add_round_stat_bonus(0, 0, defense_bonus, 0)
+			if target.actor:
+				target.actor.on_buff()
+			print("EFEITO DE SUPPORT: %s reforcou %s (+%d DEF F nesta rodada)" % [
+				card_data.display_name,
+				target.get_combat_label(),
+				defense_bonus,
+			])
+		GameEnums.SupportCardEffectType.PHYSICAL_ATTACK_RANGE_BUFF:
+			var attack_bonus: int = int(ceil(float(target.get_physical_attack_value()) * (card_data.physical_attack_multiplier - 1.0)))
+			target.add_round_stat_bonus(attack_bonus, 0, 0, 0)
+			target.apply_attack_range_bonus(maxi(0, card_data.attack_range_bonus), maxi(1, card_data.effect_duration_turns))
+			if target.actor:
+				target.actor.on_buff()
+			print("EFEITO DE SUPPORT: %s armou %s (+%d ATQ F, +%d alcance)" % [
+				card_data.display_name,
+				target.get_combat_label(),
+				attack_bonus,
+				card_data.attack_range_bonus,
+			])
 
 	_refresh_actor_state(target)
 	_refresh_targeting_preview()
 
 func _apply_support_card_effect_on_coord(card_data: CardData, coord: Vector2i) -> void:
+	_apply_support_card_effect_on_coord_for_team(card_data, coord, GameEnums.TeamSide.PLAYER)
+
+func _apply_support_card_effect_on_coord_for_team(card_data: CardData, coord: Vector2i, owner_team_side: int) -> void:
 	if card_data == null:
 		return
 
 	match card_data.support_effect_type:
 		GameEnums.SupportCardEffectType.CELL_TRAP_STUN:
 			bone_prison_coord = coord
-			bone_prison_owner_team = GameEnums.TeamSide.PLAYER
+			bone_prison_owner_team = owner_team_side
 			bone_prison_stun_turns = maxi(1, card_data.stun_turns)
 			bone_prison_mana_gain_multiplier = clampf(card_data.mana_gain_multiplier, 0.0, 1.0)
 			print("EFEITO DE SUPPORT: %s foi armado na celula inimiga %s" % [
@@ -2219,6 +2717,9 @@ func _apply_support_card_effect_on_coord(card_data: CardData, coord: Vector2i) -
 			])
 
 func _apply_instant_support_card_effect(card_data: CardData) -> void:
+	_apply_instant_support_card_effect_for_team(card_data, GameEnums.TeamSide.PLAYER)
+
+func _apply_instant_support_card_effect_for_team(card_data: CardData, owner_team_side: int) -> void:
 	if card_data == null:
 		return
 
@@ -2228,13 +2729,37 @@ func _apply_instant_support_card_effect(card_data: CardData) -> void:
 				maxi(1, card_data.delayed_trigger_min_turn),
 				maxi(card_data.delayed_trigger_min_turn, card_data.delayed_trigger_max_turn)
 			)
-			pending_blinding_mist_team = GameEnums.TeamSide.PLAYER
+			pending_blinding_mist_team = owner_team_side
 			pending_blinding_mist_duration_turns = maxi(1, card_data.effect_duration_turns)
 			pending_blinding_mist_physical_miss_chance = clampf(card_data.physical_miss_chance, 0.0, 1.0)
 			print("EFEITO DE SUPPORT: %s sera ativado por volta do turno %d de batalha" % [
 				card_data.display_name,
 				pending_blinding_mist_turn,
 			])
+		GameEnums.SupportCardEffectType.CONDITIONAL_NEXT_ROUND_GOLD:
+			if owner_team_side == GameEnums.TeamSide.PLAYER:
+				pending_player_bonus_gold_on_win = maxi(pending_player_bonus_gold_on_win, card_data.bonus_next_round_gold)
+			else:
+				pending_enemy_bonus_gold_on_win = maxi(pending_enemy_bonus_gold_on_win, card_data.bonus_next_round_gold)
+			print("EFEITO DE SUPPORT: %s ficou aguardando vitoria para render +%d de ouro" % [
+				card_data.display_name,
+				card_data.bonus_next_round_gold,
+			])
+		GameEnums.SupportCardEffectType.CONDITIONAL_TRIBUTE_STEAL:
+			if owner_team_side == GameEnums.TeamSide.PLAYER:
+				pending_player_tribute_steal_on_win = maxi(pending_player_tribute_steal_on_win, card_data.tribute_steal_amount)
+			else:
+				pending_enemy_tribute_steal_on_win = maxi(pending_enemy_tribute_steal_on_win, card_data.tribute_steal_amount)
+			print("EFEITO DE SUPPORT: %s ficou aguardando vitoria com dano ao Mestre para tributar %d" % [
+				card_data.display_name,
+				card_data.tribute_steal_amount,
+			])
+		GameEnums.SupportCardEffectType.OPENING_REPOSITION:
+			if owner_team_side == GameEnums.TeamSide.PLAYER:
+				pending_player_opening_reposition = true
+			else:
+				pending_enemy_opening_reposition = true
+			print("EFEITO DE SUPPORT: %s vai reposicionar um inimigo no inicio do combate" % card_data.display_name)
 
 func _refresh_targeting_preview() -> void:
 	if not board_grid:
@@ -2279,6 +2804,10 @@ func _get_valid_support_target_coords(card_data: CardData) -> Array[Vector2i]:
 				valid_coords.append(unit_state.coord)
 			GameEnums.SupportCardEffectType.DEATH_MANA_PACT:
 				valid_coords.append(unit_state.coord)
+			GameEnums.SupportCardEffectType.PHYSICAL_DEFENSE_RATIO_BUFF:
+				valid_coords.append(unit_state.coord)
+			GameEnums.SupportCardEffectType.PHYSICAL_ATTACK_RANGE_BUFF:
+				valid_coords.append(unit_state.coord)
 
 	return valid_coords
 
@@ -2316,7 +2845,7 @@ func _try_sell_unit(unit_state: BattleUnitState) -> void:
 		return
 
 	var refund: int = unit_state.unit_data.cost / 2
-	energy_current += refund
+	gold_current += refund
 	board_grid.remove_unit(unit_state, true)
 	runtime_units.erase(unit_state)
 	_release_pool_slot_for_unit(unit_state.unit_data.id)
@@ -2325,10 +2854,10 @@ func _try_sell_unit(unit_state: BattleUnitState) -> void:
 	if inspected_unit == unit_state:
 		_clear_inspected_context()
 
-	print("Venda concluida: %s por %d de energia | energia_agora=%d" % [
+	print("Venda concluida: %s por %d de ouro | ouro_agora=%d" % [
 		unit_state.get_combat_label(),
 		refund,
-		energy_current,
+		gold_current,
 	])
 	_refresh_race_synergy_state(false)
 	_refresh_targeting_preview()
@@ -2421,6 +2950,55 @@ func _apply_bone_prison_opening() -> void:
 	bone_prison_stun_turns = 2
 	bone_prison_mana_gain_multiplier = 0.0
 
+func _apply_opening_reposition_effects() -> void:
+	if pending_player_opening_reposition:
+		_trigger_opening_reposition_for_team(GameEnums.TeamSide.PLAYER)
+	if pending_enemy_opening_reposition:
+		_trigger_opening_reposition_for_team(GameEnums.TeamSide.ENEMY)
+	pending_player_opening_reposition = false
+	pending_enemy_opening_reposition = false
+
+func _trigger_opening_reposition_for_team(owner_team_side: int) -> void:
+	var target_team_side: int = GameEnums.TeamSide.ENEMY if owner_team_side == GameEnums.TeamSide.PLAYER else GameEnums.TeamSide.PLAYER
+	var target_candidates: Array[BattleUnitState] = []
+	for unit_state in runtime_units:
+		if unit_state == null or not unit_state.can_act():
+			continue
+		if unit_state.team_side != target_team_side:
+			continue
+		if unit_state.is_master:
+			continue
+		target_candidates.append(unit_state)
+	if target_candidates.is_empty():
+		return
+
+	var target: BattleUnitState = target_candidates[randi() % target_candidates.size()]
+	var destination: Vector2i = _find_random_free_coord_for_team(owner_team_side)
+	if not board_grid.is_valid_coord(destination):
+		return
+	if board_grid.move_unit(target, destination):
+		print("TORNADO: %s foi arrastado para %s" % [
+			target.get_combat_label(),
+			destination,
+		])
+		_refresh_race_synergy_state(false)
+
+func _find_random_free_coord_for_team(team_side: int) -> Vector2i:
+	var free_coords: Array[Vector2i] = []
+	for y in range(BattleConfig.BOARD_HEIGHT):
+		for x in range(BattleConfig.BOARD_WIDTH):
+			var coord := Vector2i(x, y)
+			if not board_grid.is_valid_coord(coord):
+				continue
+			if not board_grid.is_coord_in_team_zone(coord, team_side):
+				continue
+			if not board_grid.is_cell_free(coord):
+				continue
+			free_coords.append(coord)
+	if free_coords.is_empty():
+		return Vector2i(-1, -1)
+	return free_coords[randi() % free_coords.size()]
+
 func _get_units_in_radius(center_coord: Vector2i, radius: int, team_filter: int = -1) -> Array[BattleUnitState]:
 	var targets: Array[BattleUnitState] = []
 	for unit_state in runtime_units:
@@ -2464,6 +3042,55 @@ func _find_enemy_with_highest_physical_attack(team_side: int) -> BattleUnitState
 			best_target = unit_state
 	return best_target
 
+func _find_enemy_with_highest_magic_attack(team_side: int) -> BattleUnitState:
+	var best_target: BattleUnitState = null
+	var best_value: int = -1
+	for unit_state in runtime_units:
+		if unit_state == null or not unit_state.can_act():
+			continue
+		if unit_state.team_side == team_side:
+			continue
+		if unit_state.is_stealthed():
+			continue
+		var attack_value: int = unit_state.get_magic_attack_value()
+		if attack_value > best_value:
+			best_value = attack_value
+			best_target = unit_state
+	return best_target
+
+func _find_ally_with_highest_physical_attack(team_side: int, exclude_unit: BattleUnitState = null) -> BattleUnitState:
+	var best_target: BattleUnitState = null
+	var best_value: int = -1
+	for unit_state in runtime_units:
+		if unit_state == null or not unit_state.can_act():
+			continue
+		if unit_state.team_side != team_side:
+			continue
+		if unit_state == exclude_unit:
+			continue
+		var attack_value: int = unit_state.get_physical_attack_value()
+		if attack_value > best_value:
+			best_value = attack_value
+			best_target = unit_state
+	return best_target
+
+func _find_adjacent_ally_with_highest_physical_attack(source: BattleUnitState) -> BattleUnitState:
+	if source == null or board_grid == null:
+		return null
+	var best_target: BattleUnitState = null
+	var best_value: int = -1
+	for coord in board_grid.get_adjacent_coords(source.coord):
+		var ally: BattleUnitState = board_grid.get_unit_at(coord)
+		if ally == null or not ally.can_act():
+			continue
+		if ally.team_side != source.team_side or ally == source:
+			continue
+		var attack_value: int = ally.get_physical_attack_value()
+		if attack_value > best_value:
+			best_value = attack_value
+			best_target = ally
+	return best_target
+
 func _find_ally_with_highest_magic_attack(team_side: int, exclude_unit: BattleUnitState = null) -> BattleUnitState:
 	var best_target: BattleUnitState = null
 	var best_value: int = -1
@@ -2504,6 +3131,37 @@ func _find_ally_prioritize_master(source: BattleUnitState) -> BattleUnitState:
 	if best_master != null:
 		return best_master
 	return best_ally
+
+func _find_best_adjacent_coord_to_target(target: BattleUnitState, moving_team_side: int, reference_coord: Vector2i) -> Vector2i:
+	if target == null or board_grid == null:
+		return Vector2i(-1, -1)
+	var best_coord: Vector2i = Vector2i(-1, -1)
+	var best_score: int = 1000000
+	for coord in board_grid.get_adjacent_coords(target.coord):
+		if not board_grid.is_cell_free(coord):
+			continue
+		var score: int = board_grid.distance_between_cells(coord, reference_coord)
+		if moving_team_side == GameEnums.TeamSide.PLAYER:
+			score += maxi(0, coord.y - target.coord.y) * 10
+		else:
+			score += maxi(0, target.coord.y - coord.y) * 10
+		if score < best_score:
+			best_score = score
+			best_coord = coord
+	return best_coord
+
+func _grant_team_next_round_gold(team_side: int, amount: int, source_label: String) -> void:
+	if amount <= 0:
+		return
+	var player_state: MatchPlayerState = _get_player_state_for_team(team_side)
+	if player_state == null:
+		return
+	player_state.banked_gold += amount
+	print("OURO: %s garantiu +%d de ouro futuro via %s" % [
+		player_state.display_name,
+		amount,
+		source_label,
+	])
 
 func _process_unit_turn(acting_unit: BattleUnitState) -> Dictionary:
 	var turn_result: Dictionary = {"outcome": "stuck"}
@@ -2779,6 +3437,308 @@ func _try_cast_unit_skill(acting_unit: BattleUnitState) -> bool:
 				aura_targets.size(),
 			])
 			return true
+		GameEnums.SkillEffectType.TARGET_PHYSICAL_VULNERABILITY:
+			var marked_target: BattleUnitState = _find_target_for_unit(acting_unit)
+			if marked_target == null:
+				return false
+			if _move_towards_skill_target_if_needed(acting_unit, marked_target.coord, acting_unit.get_skill_range(), marked_target):
+				return true
+			if not acting_unit.spend_mana(acting_unit.get_skill_mana_cost()):
+				return false
+			if acting_unit.actor:
+				acting_unit.actor.on_skill_cast()
+			marked_target.apply_received_physical_damage_multiplier(
+				maxf(1.0, skill_data.received_physical_damage_multiplier),
+				maxi(1, skill_data.duration_turns)
+			)
+			if marked_target.actor:
+				marked_target.actor.on_damage()
+			print("UNIT SKILL: %s marcou %s | dano fisico recebido x%.2f" % [
+				acting_unit.get_combat_label(),
+				marked_target.get_combat_label(),
+				skill_data.received_physical_damage_multiplier,
+			])
+			_refresh_actor_state(marked_target)
+			return true
+		GameEnums.SkillEffectType.POUNCE_MAGIC_HUNTER_STUN:
+			var pounce_target: BattleUnitState = _find_enemy_with_highest_magic_attack(acting_unit.team_side)
+			if pounce_target == null:
+				return false
+			var pounce_distance: int = board_grid.distance_between_cells(acting_unit.coord, pounce_target.coord)
+			if pounce_distance > acting_unit.get_skill_range():
+				var landing_coord: Vector2i = _find_best_adjacent_coord_to_target(pounce_target, acting_unit.team_side, acting_unit.coord)
+				if board_grid.is_valid_coord(landing_coord) and board_grid.move_unit(acting_unit, landing_coord):
+					_refresh_race_synergy_state(false)
+				elif _move_towards_skill_target_if_needed(acting_unit, pounce_target.coord, acting_unit.get_skill_range(), pounce_target):
+					return true
+			if not acting_unit.spend_mana(acting_unit.get_skill_mana_cost()):
+				return false
+			if acting_unit.actor:
+				acting_unit.actor.on_skill_cast()
+			pounce_target.apply_turn_skip(maxi(1, skill_data.turn_skip_count))
+			var pounce_result: Dictionary = _calculate_damage_result(
+				acting_unit,
+				pounce_target,
+				int(round(float(acting_unit.get_physical_attack_value()) * skill_data.physical_power_multiplier)) + skill_data.damage_amount,
+				0,
+				true,
+				false,
+				false
+			)
+			_apply_damage_result(
+				acting_unit,
+				pounce_target,
+				pounce_result,
+				"%s saltou com %s em %s" % [acting_unit.get_combat_label(), skill_name, pounce_target.get_combat_label()],
+				["Atordoado"],
+				false,
+				true,
+				true
+			)
+			return true
+		GameEnums.SkillEffectType.SELF_BASIC_ATTACK_BLOCK:
+			if not acting_unit.spend_mana(acting_unit.get_skill_mana_cost()):
+				return false
+			if acting_unit.actor:
+				acting_unit.actor.on_skill_cast()
+			acting_unit.apply_basic_attack_block(maxi(1, skill_data.blocked_basic_attack_count))
+			if acting_unit.actor:
+				acting_unit.actor.on_buff()
+			print("UNIT SKILL: %s ergueu defesa total para %d ataques basicos" % [
+				acting_unit.get_combat_label(),
+				maxi(1, skill_data.blocked_basic_attack_count),
+			])
+			_refresh_actor_state(acting_unit)
+			return true
+		GameEnums.SkillEffectType.AOE_PHYSICAL_ATTACK_SLOW:
+			var slam_target: BattleUnitState = _find_target_for_unit(acting_unit)
+			if slam_target == null:
+				return false
+			if _move_towards_skill_target_if_needed(acting_unit, slam_target.coord, acting_unit.get_skill_range(), slam_target):
+				return true
+			if not acting_unit.spend_mana(acting_unit.get_skill_mana_cost()):
+				return false
+			if acting_unit.actor:
+				acting_unit.actor.on_skill_cast()
+			var slam_targets: Array[BattleUnitState] = _get_units_in_radius(
+				slam_target.coord,
+				maxi(0, skill_data.area_radius),
+				GameEnums.TeamSide.PLAYER if acting_unit.team_side == GameEnums.TeamSide.ENEMY else GameEnums.TeamSide.ENEMY
+			)
+			for target in slam_targets:
+				target.apply_action_charge_multiplier(
+					clampf(skill_data.action_charge_multiplier, 0.1, 3.0),
+					maxi(1, skill_data.duration_turns)
+				)
+				var slam_result: Dictionary = _calculate_damage_result(
+					acting_unit,
+					target,
+					int(round(float(acting_unit.get_physical_attack_value()) * skill_data.physical_power_multiplier)) + skill_data.damage_amount,
+					0,
+					true,
+					false,
+					false
+				)
+				_apply_damage_result(
+					acting_unit,
+					target,
+					slam_result,
+					"%s abalou %s com %s" % [acting_unit.get_combat_label(), target.get_combat_label(), skill_name],
+					["Velocidade %.0f%%" % (skill_data.action_charge_multiplier * 100.0)],
+					false,
+					true,
+					false
+				)
+			return not slam_targets.is_empty()
+		GameEnums.SkillEffectType.MISSING_HEALTH_PHYSICAL_STRIKE:
+			var bloody_target: BattleUnitState = _find_target_for_unit(acting_unit)
+			if bloody_target == null:
+				return false
+			if _move_towards_skill_target_if_needed(acting_unit, bloody_target.coord, acting_unit.get_skill_range(), bloody_target):
+				return true
+			if not acting_unit.spend_mana(acting_unit.get_skill_mana_cost()):
+				return false
+			if acting_unit.actor:
+				acting_unit.actor.on_skill_cast()
+			var missing_ratio: float = 0.0
+			if acting_unit.unit_data != null and acting_unit.unit_data.max_hp > 0:
+				missing_ratio = 1.0 - (float(acting_unit.current_hp) / float(acting_unit.unit_data.max_hp))
+			var bloody_multiplier: float = skill_data.physical_power_multiplier + missing_ratio
+			var bloody_result: Dictionary = _calculate_damage_result(
+				acting_unit,
+				bloody_target,
+				int(round(float(acting_unit.get_physical_attack_value()) * bloody_multiplier)) + skill_data.damage_amount,
+				0,
+				true,
+				false,
+				false
+			)
+			_apply_damage_result(
+				acting_unit,
+				bloody_target,
+				bloody_result,
+				"%s disparou %s em %s" % [acting_unit.get_combat_label(), skill_name, bloody_target.get_combat_label()],
+				["PV perdido %.0f%%" % (missing_ratio * 100.0)],
+				false,
+				true,
+				true
+			)
+			return true
+		GameEnums.SkillEffectType.SELF_BERSERK_FRENZY:
+			if not acting_unit.spend_mana(acting_unit.get_skill_mana_cost()):
+				return false
+			if acting_unit.actor:
+				acting_unit.actor.on_skill_cast()
+			acting_unit.apply_action_charge_multiplier(
+				maxf(1.0, skill_data.action_charge_multiplier),
+				maxi(1, skill_data.duration_turns)
+			)
+			acting_unit.apply_physical_defense_multiplier(
+				maxf(0.0, skill_data.physical_defense_multiplier),
+				maxi(1, skill_data.duration_turns)
+			)
+			if acting_unit.actor:
+				acting_unit.actor.on_buff()
+			print("UNIT SKILL: %s entrou em furia | carga x%.2f, defesa fisica x%.2f" % [
+				acting_unit.get_combat_label(),
+				skill_data.action_charge_multiplier,
+				skill_data.physical_defense_multiplier,
+			])
+			_refresh_actor_state(acting_unit)
+			return true
+		GameEnums.SkillEffectType.SELF_CLEAVE_BUFF:
+			if not acting_unit.spend_mana(acting_unit.get_skill_mana_cost()):
+				return false
+			if acting_unit.actor:
+				acting_unit.actor.on_skill_cast()
+			acting_unit.apply_cleave_attacks(maxi(1, skill_data.cleave_attack_count))
+			if acting_unit.actor:
+				acting_unit.actor.on_buff()
+			print("UNIT SKILL: %s ganhou cleave nos proximos %d ataques" % [
+				acting_unit.get_combat_label(),
+				maxi(1, skill_data.cleave_attack_count),
+			])
+			_refresh_actor_state(acting_unit)
+			return true
+		GameEnums.SkillEffectType.TARGET_PHYSICAL_DEFENSE_BREAK_ZERO:
+			var rend_target: BattleUnitState = _find_target_for_unit(acting_unit)
+			if rend_target == null:
+				return false
+			if _move_towards_skill_target_if_needed(acting_unit, rend_target.coord, acting_unit.get_skill_range(), rend_target):
+				return true
+			if not acting_unit.spend_mana(acting_unit.get_skill_mana_cost()):
+				return false
+			if acting_unit.actor:
+				acting_unit.actor.on_skill_cast()
+			rend_target.apply_physical_defense_multiplier(
+				skill_data.physical_defense_multiplier,
+				maxi(1, skill_data.duration_turns)
+			)
+			var rend_result: Dictionary = _calculate_damage_result(
+				acting_unit,
+				rend_target,
+				int(round(float(acting_unit.get_physical_attack_value()) * skill_data.physical_power_multiplier)) + skill_data.damage_amount,
+				0,
+				true,
+				false,
+				false
+			)
+			_apply_damage_result(
+				acting_unit,
+				rend_target,
+				rend_result,
+				"%s esmagou %s com %s" % [acting_unit.get_combat_label(), rend_target.get_combat_label(), skill_name],
+				["DEF F zerada"],
+				false,
+				true,
+				true
+			)
+			return true
+		GameEnums.SkillEffectType.GAIN_NEXT_ROUND_GOLD:
+			if not acting_unit.spend_mana(acting_unit.get_skill_mana_cost()):
+				return false
+			if acting_unit.actor:
+				acting_unit.actor.on_skill_cast()
+			_grant_team_next_round_gold(
+				acting_unit.team_side,
+				maxi(1, skill_data.gold_gain),
+				skill_name
+			)
+			if acting_unit.actor:
+				acting_unit.actor.on_buff()
+			return true
+		GameEnums.SkillEffectType.ALLY_HEAL_PERCENT:
+			var ratio_heal_target: BattleUnitState = _find_most_injured_ally(acting_unit)
+			if ratio_heal_target == null:
+				return false
+			if _move_towards_skill_target_if_needed(acting_unit, ratio_heal_target.coord, acting_unit.get_skill_range(), ratio_heal_target):
+				return true
+			if not acting_unit.spend_mana(acting_unit.get_skill_mana_cost()):
+				return false
+			if acting_unit.actor:
+				acting_unit.actor.on_skill_cast()
+			var ratio_heal_amount: int = int(round(float(ratio_heal_target.unit_data.max_hp) * skill_data.heal_ratio))
+			var ratio_healed: int = ratio_heal_target.heal(maxi(1, ratio_heal_amount))
+			if ratio_heal_target.actor and ratio_healed > 0:
+				ratio_heal_target.actor.on_heal()
+			print("UNIT SKILL: %s curou %s em %d PV" % [
+				acting_unit.get_combat_label(),
+				ratio_heal_target.get_combat_label(),
+				ratio_healed,
+			])
+			_refresh_actor_state(ratio_heal_target)
+			return ratio_healed > 0
+		GameEnums.SkillEffectType.ADJACENT_LIFESTEAL_GIFT:
+			var lifesteal_target: BattleUnitState = _find_adjacent_ally_with_highest_physical_attack(acting_unit)
+			if lifesteal_target == null:
+				var fallback_ally: BattleUnitState = _find_ally_with_highest_physical_attack(acting_unit.team_side, acting_unit)
+				if fallback_ally == null:
+					return false
+				if _move_towards_skill_target_if_needed(acting_unit, fallback_ally.coord, 1, fallback_ally):
+					return true
+				lifesteal_target = _find_adjacent_ally_with_highest_physical_attack(acting_unit)
+				if lifesteal_target == null:
+					return false
+			if not acting_unit.spend_mana(acting_unit.get_skill_mana_cost()):
+				return false
+			if acting_unit.actor:
+				acting_unit.actor.on_skill_cast()
+			lifesteal_target.apply_lifesteal_ratio(
+				maxf(0.0, skill_data.lifesteal_ratio),
+				maxi(1, skill_data.duration_turns)
+			)
+			if lifesteal_target.actor:
+				lifesteal_target.actor.on_buff()
+			print("UNIT SKILL: %s aqueceu o sangue de %s" % [
+				acting_unit.get_combat_label(),
+				lifesteal_target.get_combat_label(),
+			])
+			_refresh_actor_state(lifesteal_target)
+			return true
+		GameEnums.SkillEffectType.ADJACENT_MANA_GIFT:
+			var mana_targets: Array[BattleUnitState] = []
+			for target in _get_units_in_radius(acting_unit.coord, 1, acting_unit.team_side):
+				if target == acting_unit:
+					continue
+				mana_targets.append(target)
+			if mana_targets.is_empty():
+				return false
+			if not acting_unit.spend_mana(acting_unit.get_skill_mana_cost()):
+				return false
+			if acting_unit.actor:
+				acting_unit.actor.on_skill_cast()
+			for mana_target in mana_targets:
+				var mana_gain: int = int(round(float(mana_target.get_mana_max()) * skill_data.ally_mana_grant_ratio))
+				mana_target.gain_mana(maxi(1, mana_gain))
+				if mana_target.actor:
+					mana_target.actor.on_buff()
+				_refresh_actor_state(mana_target)
+			print("UNIT SKILL: %s acelerou %d aliados com %s" % [
+				acting_unit.get_combat_label(),
+				mana_targets.size(),
+				skill_name,
+			])
+			return true
 		GameEnums.SkillEffectType.AOE_PHYSICAL_DEFENSE_BREAK:
 			return _cast_area_damage_skill(acting_unit, skill_data, skill_name)
 		GameEnums.SkillEffectType.HYBRID_STRIKE_MANA_SUPPRESS:
@@ -2843,6 +3803,7 @@ func _move_towards_skill_target_if_needed(
 			target_label = target.get_combat_label()
 		var move_type: String = str(move_plan.get("move_type", "advance"))
 		acting_unit.remember_navigation_move(target_key, move_type, from_coord, step_coord)
+		_refresh_race_synergy_state(false)
 		if move_type == "sidestep":
 			print("UNBLOCK: %s reposicionou de lado para alcancar %s" % [
 				acting_unit.get_combat_label(),
@@ -2889,6 +3850,10 @@ func _find_alternate_target_for_unit(source: BattleUnitState, excluded_target: B
 	return null
 
 func _find_target_for_unit(source: BattleUnitState) -> BattleUnitState:
+	var forced_target: BattleUnitState = _resolve_forced_target_for_unit(source)
+	if forced_target != null:
+		return forced_target
+
 	var best_target: BattleUnitState = null
 	var best_score: int = 1000000
 
@@ -2911,6 +3876,19 @@ func _find_target_for_unit(source: BattleUnitState) -> BattleUnitState:
 			return best_target
 
 	return best_target
+
+func _resolve_forced_target_for_unit(source: BattleUnitState) -> BattleUnitState:
+	if source == null or not source.has_forced_target():
+		return null
+	for candidate in runtime_units:
+		if candidate == null or not candidate.can_act():
+			continue
+		if candidate.team_side == source.team_side:
+			continue
+		if source.is_forced_target(candidate):
+			return candidate
+	source.clear_forced_target()
+	return null
 
 func _score_target_for_unit(source: BattleUnitState, candidate: BattleUnitState) -> int:
 	var distance: int = board_grid.distance_between_cells(source.coord, candidate.coord)
@@ -2948,6 +3926,7 @@ func _perform_move_towards_target(acting_unit: BattleUnitState, target: BattleUn
 	if board_grid.move_unit(acting_unit, next_coord):
 		var move_type: String = str(move_plan.get("move_type", "advance"))
 		acting_unit.remember_navigation_move(target_key, move_type, from_coord, next_coord)
+		_refresh_race_synergy_state(false)
 		if move_type == "sidestep":
 			print("UNBLOCK: %s contornou bloqueio e foi para %s" % [
 				acting_unit.get_combat_label(),
@@ -2964,6 +3943,21 @@ func _perform_move_towards_target(acting_unit: BattleUnitState, target: BattleUn
 	return false
 
 func _perform_attack(attacker: BattleUnitState, target: BattleUnitState) -> void:
+	if target.consume_basic_attack_block():
+		print("ATAQUE BLOQUEADO: %s teve o golpe anulado por %s" % [
+			attacker.get_combat_label(),
+			target.get_combat_label(),
+		])
+		if target.actor:
+			target.actor.on_buff()
+		if attacker.can_act():
+			var gained_attack: int = attacker.gain_mana(attacker.get_mana_gain_on_attack())
+			if gained_attack > 0:
+				_log_mana_gain(attacker, gained_attack, "attack")
+		_refresh_actor_state(attacker)
+		_refresh_actor_state(target)
+		return
+
 	var attack_result: Dictionary = _calculate_attack_result(attacker, target)
 	var notes: Array[String] = []
 	var apply_result: Dictionary = _apply_damage_result(
@@ -2985,6 +3979,42 @@ func _perform_attack(attacker: BattleUnitState, target: BattleUnitState) -> void
 			if attacker.actor:
 				attacker.actor.on_heal()
 			_refresh_actor_state(attacker)
+
+	if attacker.has_cleave_attacks():
+		attacker.consume_cleave_attack()
+		_perform_cleave_attack(attacker, target)
+
+func _perform_cleave_attack(attacker: BattleUnitState, primary_target: BattleUnitState) -> void:
+	if attacker == null or primary_target == null or board_grid == null:
+		return
+
+	for coord in board_grid.get_adjacent_coords(primary_target.coord):
+		var splash_target: BattleUnitState = board_grid.get_unit_at(coord)
+		if splash_target == null or not splash_target.can_act():
+			continue
+		if splash_target.team_side == attacker.team_side:
+			continue
+		if splash_target == primary_target:
+			continue
+		var splash_result: Dictionary = _calculate_damage_result(
+			attacker,
+			splash_target,
+			int(round(float(attacker.get_physical_attack_value()) * THRAX_CLEAVE_DAMAGE_RATIO)),
+			0,
+			true,
+			false,
+			false
+		)
+		_apply_damage_result(
+			attacker,
+			splash_target,
+			splash_result,
+			"%s espalhou cleave em %s" % [attacker.get_combat_label(), splash_target.get_combat_label()],
+			["Cleave"],
+			false,
+			true,
+			false
+		)
 
 func _calculate_attack_result(attacker: BattleUnitState, target: BattleUnitState) -> Dictionary:
 	return _calculate_damage_result(
@@ -3029,6 +4059,7 @@ func _calculate_damage_result(
 			physical_missed = true
 
 	var final_physical: int = maxi(0, adjusted_physical - target.get_physical_defense_value())
+	final_physical = int(round(float(final_physical) * target.get_received_physical_damage_multiplier()))
 	var absorbed_by_shield: int = 0
 	if final_physical > 0:
 		var shield_result: Dictionary = target.absorb_physical_damage(final_physical)
@@ -3134,6 +4165,19 @@ func _apply_damage_result(
 		if gained_attack > 0:
 			_log_mana_gain(attacker, gained_attack, "attack")
 
+	if attacker != null and attacker.can_act() and damage > 0:
+		var status_lifesteal_ratio: float = attacker.get_lifesteal_ratio()
+		if status_lifesteal_ratio > 0.0:
+			var healed_from_status: int = attacker.heal(int(round(float(damage) * status_lifesteal_ratio)))
+			if healed_from_status > 0:
+				if attacker.actor:
+					attacker.actor.on_heal()
+				print("ROUBO DE VIDA: %s recuperou %d PV" % [
+					attacker.get_combat_label(),
+					healed_from_status,
+				])
+				_refresh_actor_state(attacker)
+
 	if grant_hit_mana and target != null and target.unit_data != null:
 		var gained_hit: int = target.gain_mana(target.get_mana_gain_on_hit())
 		if gained_hit > 0:
@@ -3207,6 +4251,30 @@ func _try_cast_master_skill(caster: BattleUnitState) -> bool:
 				caster.get_combat_label(),
 				caster.get_master_skill_name(),
 				summon_count,
+			])
+			_refresh_actor_state(caster)
+			return true
+		if master_skill != null and master_skill.effect_type == GameEnums.SkillEffectType.MASTER_TAUNT_AURA:
+			var taunted_targets: Array[BattleUnitState] = _get_units_in_radius(
+				caster.coord,
+				maxi(1, master_skill.area_radius),
+				GameEnums.TeamSide.PLAYER if caster.team_side == GameEnums.TeamSide.ENEMY else GameEnums.TeamSide.ENEMY
+			)
+			if taunted_targets.is_empty():
+				return false
+			if not caster.spend_mana(caster.get_mana_max()):
+				return false
+			if caster.actor:
+				caster.actor.on_skill_cast()
+			for target in taunted_targets:
+				target.apply_forced_target(caster, maxi(1, master_skill.duration_turns))
+				if target.actor:
+					target.actor.on_damage()
+				_refresh_actor_state(target)
+			print("MASTER SKILL: %s usou %s e provocou %d inimigos" % [
+				caster.get_combat_label(),
+				caster.get_master_skill_name(),
+				taunted_targets.size(),
 			])
 			_refresh_actor_state(caster)
 			return true
@@ -3601,7 +4669,7 @@ func _resolve_necromancer_summon_coord(caster: BattleUnitState) -> Vector2i:
 
 	var broad_fallback: Vector2i = _find_nearest_free_coord_anywhere(caster.coord, caster.team_side)
 	if board_grid.is_valid_coord(broad_fallback):
-		print("SUMMON fallback: sem espaco proximo ao Necromante em %s, usando celula livre mais proxima %s" % [
+		print("SUMMON fallback: sem espaco proximo ao Mordos em %s, usando celula livre mais proxima %s" % [
 			caster.coord,
 			broad_fallback,
 		])
@@ -3609,7 +4677,7 @@ func _resolve_necromancer_summon_coord(caster: BattleUnitState) -> Vector2i:
 
 	var final_fallback: Vector2i = _find_first_free_coord_in_zone(caster.team_side)
 	if board_grid.is_valid_coord(final_fallback):
-		print("SUMMON fallback: sem espaco perto do Necromante nem ao redor imediato, usando fallback de zona %s" % final_fallback)
+		print("SUMMON fallback: sem espaco perto do Mordos nem ao redor imediato, usando fallback de zona %s" % final_fallback)
 	return final_fallback
 
 func _find_free_adjacent_coord_near_caster(origin_coord: Vector2i, team_side: int) -> Vector2i:
@@ -3738,7 +4806,7 @@ func _build_respawn_request_for_unit(unit_state: BattleUnitState) -> RespawnRequ
 		unit_path,
 		unit_state.unit_data.id,
 		unit_state.team_side,
-		unit_state.home_coord,
+		_get_persistent_master_home_coord(unit_state.team_side) if unit_state.is_master else unit_state.home_coord,
 		unit_state.is_master
 	)
 
@@ -3785,7 +4853,9 @@ func _clear_inspected_context() -> void:
 	inspected_support_index = -1
 	observed_player_id = ""
 	if board_grid:
+		board_grid.clear_observer_preview()
 		board_grid.clear_selection()
+	_apply_local_board_view_for_phase()
 	if battle_hud:
 		battle_hud.clear_unit_info()
 	_sync_world_overlay_focus()
@@ -3809,6 +4879,8 @@ func _commit_player_prep_formation() -> void:
 				unit_state.coord,
 			])
 		unit_state.home_coord = unit_state.coord
+		if unit_state.is_master:
+			_set_persistent_master_home_coord(unit_state.team_side, unit_state.coord)
 
 	if committed_units.is_empty():
 		print("PREP formation locked: %d player units anchored" % _count_living_team(GameEnums.TeamSide.PLAYER))
@@ -3863,9 +4935,17 @@ func _sync_world_overlay_focus() -> void:
 		if unit_state == null or unit_state.actor == null:
 			continue
 		unit_state.actor.set_overlay_suppressed(suppress_overlays)
+	if board_grid:
+		board_grid.set_observer_overlay_suppressed(suppress_overlays)
 
 func _on_board_unit_right_clicked(unit_state: BattleUnitState) -> void:
-	observed_player_id = ""
+	_exit_observer_mode_if_needed(false)
+	inspected_unit = unit_state
+	inspected_deploy_index = -1
+	inspected_support_index = -1
+	_refresh_inspected_unit_panel()
+
+func _on_observed_board_unit_right_clicked(unit_state: BattleUnitState) -> void:
 	inspected_unit = unit_state
 	inspected_deploy_index = -1
 	inspected_support_index = -1
@@ -3875,6 +4955,8 @@ func _on_board_empty_right_clicked() -> void:
 	_clear_inspected_context()
 
 func _on_player_sidebar_entry_pressed(player_id: String) -> void:
+	if card_shop_open:
+		return
 	if player_id.is_empty() or player_id == LOCAL_PLAYER_ID:
 		_clear_observed_board_preview()
 		return
@@ -3885,33 +4967,98 @@ func _on_player_sidebar_entry_pressed(player_id: String) -> void:
 
 	var observed_snapshot: Dictionary = lobby_manager.get_board_snapshot(player_id)
 	if observed_snapshot.is_empty():
-		lobby_manager.build_remote_round_snapshots(current_round, [LOCAL_PLAYER_ID])
+		lobby_manager.prepare_live_tables_for_round(round_manager.get_current_pairings(), current_round, [LOCAL_PLAYER_ID])
 		observed_snapshot = lobby_manager.get_board_snapshot(player_id)
 		if observed_snapshot.is_empty():
 			print("OBSERVE: snapshot indisponivel para %s" % player_id)
 			return
 
-	observed_player_id = player_id
-	inspected_unit = null
-	inspected_deploy_index = -1
-	inspected_support_index = -1
-	if battle_hud:
-		battle_hud.update_observed_board(observed_snapshot)
-	_sync_world_overlay_focus()
+	_clear_drag_state()
+	_clear_support_selection(false)
+	selected_deploy_index = -1
+	_show_observed_board_snapshot(observed_snapshot)
 	_emit_hud_update()
-	print("OBSERVE: visualizando tabuleiro salvo de %s" % str(observed_snapshot.get("player_name", player_id)))
+	print("OBSERVE: visualizando tabuleiro de %s" % str(observed_snapshot.get("player_name", player_id)))
 
 func _on_return_to_local_board_pressed() -> void:
 	_clear_observed_board_preview()
 
 func _clear_observed_board_preview() -> void:
-	if observed_player_id.is_empty():
+	if observed_player_id.is_empty() and not _is_observer_mode_active():
 		return
+	inspected_unit = null
+	inspected_deploy_index = -1
+	inspected_support_index = -1
 	observed_player_id = ""
+	if board_grid:
+		board_grid.clear_observer_preview()
+	_apply_local_board_view_for_phase()
 	if battle_hud:
 		battle_hud.clear_unit_info()
 	_sync_world_overlay_focus()
 	_emit_hud_update()
+
+func _show_observed_board_snapshot(observed_snapshot: Dictionary) -> void:
+	if observed_snapshot.is_empty():
+		return
+	observed_player_id = str(observed_snapshot.get("player_id", observed_player_id))
+	inspected_unit = null
+	inspected_deploy_index = -1
+	inspected_support_index = -1
+	_show_observed_board_preview_only(observed_snapshot)
+	if battle_hud:
+		battle_hud.update_observed_board(observed_snapshot)
+	_sync_world_overlay_focus()
+
+func _show_observed_board_preview_only(observed_snapshot: Dictionary) -> void:
+	if observed_snapshot.is_empty():
+		return
+	if board_grid:
+		board_grid.show_observer_preview(_build_observer_preview_units_from_snapshot(observed_snapshot))
+	_apply_board_view_mode(GameEnums.BoardViewMode.FULL_BATTLE, true)
+
+func _exit_observer_mode_if_needed(clear_hud: bool) -> void:
+	if not _is_observer_mode_active() and observed_player_id.is_empty():
+		return
+	observed_player_id = ""
+	if board_grid:
+		board_grid.clear_observer_preview()
+	_apply_local_board_view_for_phase()
+	if clear_hud and battle_hud:
+		battle_hud.clear_unit_info()
+
+func _apply_local_board_view_for_phase() -> void:
+	var target_view_mode: int = GameEnums.BoardViewMode.SELF_ONLY if current_state == GameEnums.BattleState.PREP else GameEnums.BoardViewMode.FULL_BATTLE
+	_apply_board_view_mode(target_view_mode, true)
+
+func _build_observer_preview_units_from_snapshot(snapshot: Dictionary) -> Array[BattleUnitState]:
+	var preview_units: Array[BattleUnitState] = []
+	var snapshot_units: Array = snapshot.get("units", [])
+	for unit_variant in snapshot_units:
+		var unit_entry: Dictionary = unit_variant
+		var unit_path: String = str(unit_entry.get("unit_path", ""))
+		var unit_data: UnitData = _load_unit_data(unit_path)
+		if unit_data == null:
+			continue
+
+		var team_side: int = int(unit_entry.get("team_side", GameEnums.TeamSide.PLAYER))
+		var coord: Vector2i = unit_entry.get("coord", Vector2i(-1, -1))
+		var is_master: bool = bool(unit_entry.get("is_master", false))
+		var preview_state: BattleUnitState = BattleUnitState.new().setup_from_unit_data(
+			unit_data,
+			team_side,
+			coord,
+			is_master,
+			coord
+		)
+		preview_state.current_hp = int(unit_entry.get("current_hp", unit_data.max_hp))
+		preview_state.current_mana = int(unit_entry.get("current_mana", 0))
+		preview_state.bonus_physical_attack = int(unit_entry.get("physical_attack", unit_data.physical_attack)) - unit_data.physical_attack
+		preview_state.bonus_magic_attack = int(unit_entry.get("magic_attack", unit_data.magic_attack)) - unit_data.magic_attack
+		preview_state.bonus_physical_defense = int(unit_entry.get("physical_defense", unit_data.physical_defense)) - unit_data.physical_defense
+		preview_state.bonus_magic_defense = int(unit_entry.get("magic_defense", unit_data.magic_defense)) - unit_data.magic_defense
+		preview_units.append(preview_state)
+	return preview_units
 
 func _append_unique(target_array: Array[String], value: String) -> void:
 	if not target_array.has(value):

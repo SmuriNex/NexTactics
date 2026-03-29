@@ -1,0 +1,26 @@
+[gd_resource type="Resource" script_class="UnitData" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/unit_data.gd" id="1_unit_data"]
+[ext_resource type="Resource" path="res://data/skills/thrax/ironhide_minotaur_seismic_stomp.tres" id="2_skill_data"]
+
+[resource]
+script = ExtResource("1_unit_data")
+id = "ironhide_minotaur"
+display_name = "Casco-Ferreo"
+race = 5
+class_type = 1
+class_label = "Tank"
+class_short_label = "TNK"
+cost = 4
+max_hp = 28
+physical_attack = 6
+magic_attack = 0
+physical_defense = 8
+magic_defense = 2
+attack_range = 1
+crit_chance = 0.02
+mana_max = 80
+mana_gain_on_attack = 9
+mana_gain_on_hit = 12
+skill_data = ExtResource("2_skill_data")
+description = "Minotauro de casco blindado que controla espaco com pisadas sismicas."

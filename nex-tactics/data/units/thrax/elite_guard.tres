@@ -1,0 +1,26 @@
+[gd_resource type="Resource" script_class="UnitData" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/unit_data.gd" id="1_unit_data"]
+[ext_resource type="Resource" path="res://data/skills/thrax/elite_guard_shield_wall.tres" id="2_skill_data"]
+
+[resource]
+script = ExtResource("1_unit_data")
+id = "elite_guard"
+display_name = "Guarda de Elite"
+race = 0
+class_type = 1
+class_label = "Tank"
+class_short_label = "TNK"
+cost = 3
+max_hp = 24
+physical_attack = 4
+magic_attack = 0
+physical_defense = 7
+magic_defense = 2
+attack_range = 1
+crit_chance = 0.03
+mana_max = 65
+mana_gain_on_attack = 10
+mana_gain_on_hit = 11
+skill_data = ExtResource("2_skill_data")
+description = "Guarda humano de linha de frente que segura investidas com uma parede de escudos."

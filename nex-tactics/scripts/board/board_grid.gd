@@ -27,6 +27,8 @@ var current_view_mode: int = GameEnums.BoardViewMode.FULL_BATTLE
 var focus_team_side: int = GameEnums.TeamSide.PLAYER
 var input_enabled: bool = true
 var target_highlight_coords: Array[Vector2i] = []
+var observer_mode_active: bool = false
+var observer_preview_units: Array[BattleUnitState] = []
 
 @onready var board_presentation_3d: BoardPresentation3D = get_node_or_null("../BoardPresentation3D") as BoardPresentation3D
 
@@ -332,7 +334,62 @@ func clear_target_highlights() -> void:
 		board_presentation_3d.clear_target_highlights()
 	queue_redraw()
 
+func show_observer_preview(preview_units: Array[BattleUnitState]) -> void:
+	clear_observer_preview()
+	observer_mode_active = true
+	_set_runtime_unit_actor_visibility(false)
+	for preview_state in preview_units:
+		if preview_state == null or preview_state.unit_data == null:
+			continue
+		var preview_actor := UNIT_ACTOR_SCENE.instantiate() as UnitActor
+		if preview_actor == null:
+			continue
+		add_child(preview_actor)
+		preview_actor.setup(preview_state, CELL_SIZE, board_presentation_3d)
+		preview_actor.update_from_grid_coord(preview_state.coord, CELL_SIZE, false)
+		preview_state.actor = preview_actor
+		observer_preview_units.append(preview_state)
+	_refresh_unit_visibility()
+	queue_redraw()
+
+func clear_observer_preview() -> void:
+	for preview_state in observer_preview_units:
+		if preview_state == null or preview_state.actor == null:
+			continue
+		preview_state.actor.queue_free()
+		preview_state.actor = null
+	observer_preview_units.clear()
+	observer_mode_active = false
+	_set_runtime_unit_actor_visibility(true)
+	_refresh_unit_visibility()
+	queue_redraw()
+
+func is_observer_mode_active() -> bool:
+	return observer_mode_active
+
+func get_observer_unit_at(coord: Vector2i) -> BattleUnitState:
+	for preview_state in observer_preview_units:
+		if preview_state == null:
+			continue
+		if preview_state.coord == coord:
+			return preview_state
+	return null
+
+func set_observer_overlay_suppressed(value: bool) -> void:
+	for preview_state in observer_preview_units:
+		if preview_state == null or preview_state.actor == null:
+			continue
+		preview_state.actor.set_overlay_suppressed(value)
+
 func _refresh_unit_visibility() -> void:
+	if observer_mode_active:
+		for preview_state in observer_preview_units:
+			if preview_state == null or preview_state.actor == null:
+				continue
+			preview_state.actor.visible = true
+		_set_runtime_unit_actor_visibility(false)
+		return
+
 	for coord in cells.keys():
 		var occupant: BattleUnitState = get_unit_at(coord)
 		if occupant == null or occupant.actor == null:
@@ -386,6 +443,8 @@ func _draw() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if not input_enabled:
 		return
+	if observer_mode_active:
+		return
 	if event is InputEventMouseButton:
 		var mouse_event := event as InputEventMouseButton
 		if not mouse_event.pressed:
@@ -413,3 +472,10 @@ func _unhandled_input(event: InputEvent) -> void:
 func _ready() -> void:
 	build_grid()
 	set_view_mode(GameEnums.BoardViewMode.FULL_BATTLE, GameEnums.TeamSide.PLAYER)
+
+func _set_runtime_unit_actor_visibility(value: bool) -> void:
+	for coord in cells.keys():
+		var occupant: BattleUnitState = get_unit_at(coord)
+		if occupant == null or occupant.actor == null:
+			continue
+		occupant.actor.visible = value and _is_unit_visible_in_current_view(occupant)

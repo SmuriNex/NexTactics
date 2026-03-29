@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "umbral_panther_fierce_pounce"
+display_name = "Bote Feroz"
+effect_type = 15
+mana_cost = 70
+cooldown = 0.0
+range = 4
+damage_amount = 4
+physical_power_multiplier = 1.1
+turn_skip_count = 1
+description = "Salta no inimigo com maior dano magico, causa dano fisico alto e o deixa atordoado por um instante."

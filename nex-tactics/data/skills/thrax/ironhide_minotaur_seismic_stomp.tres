@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "ironhide_minotaur_seismic_stomp"
+display_name = "Pisada Sismica"
+effect_type = 17
+mana_cost = 80
+cooldown = 0.0
+range = 1
+damage_amount = 2
+physical_power_multiplier = 0.8
+area_radius = 1
+duration_turns = 3
+action_charge_multiplier = 0.7
+description = "Golpeia o chao, causa dano fisico em area e reduz o ritmo de ataques dos inimigos."

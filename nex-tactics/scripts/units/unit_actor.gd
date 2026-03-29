@@ -59,7 +59,7 @@ func update_from_grid_coord(grid_coord: Vector2i, p_cell_size: float = -1.0, ani
 	var target_position: Vector2 = Vector2(grid_coord.x + 0.5, grid_coord.y + 0.5) * cell_size
 	if not use_3d_presentation and animate:
 		var move_tween := create_tween()
-		move_tween.tween_property(self, "position", target_position, 0.10)
+		move_tween.tween_property(self, "position", target_position, BattleConfig.UNIT_MOVE_TWEEN_SECONDS)
 	else:
 		position = target_position
 
@@ -168,8 +168,8 @@ func on_damage() -> void:
 	modulate = DAMAGE_FLASH_TINT
 	scale = Vector2(1.14, 1.14)
 	var tween := create_tween()
-	tween.tween_property(self, "modulate", Color.WHITE, 0.07)
-	tween.tween_property(self, "scale", Vector2.ONE, 0.10)
+	tween.tween_property(self, "modulate", Color.WHITE, BattleConfig.UNIT_IMPACT_COLOR_SECONDS)
+	tween.tween_property(self, "scale", Vector2.ONE, BattleConfig.UNIT_IMPACT_RECOVER_SECONDS)
 
 func on_skill_cast() -> void:
 	if visual_3d != null:
@@ -177,8 +177,8 @@ func on_skill_cast() -> void:
 	modulate = SKILL_CAST_TINT
 	scale = Vector2(1.2, 1.2)
 	var tween := create_tween()
-	tween.tween_property(self, "modulate", Color.WHITE, 0.10)
-	tween.tween_property(self, "scale", Vector2.ONE, 0.12)
+	tween.tween_property(self, "modulate", Color.WHITE, BattleConfig.UNIT_EFFECT_COLOR_SECONDS)
+	tween.tween_property(self, "scale", Vector2.ONE, BattleConfig.UNIT_EFFECT_RECOVER_SECONDS)
 
 func on_heal() -> void:
 	_refresh_visual()
@@ -187,8 +187,8 @@ func on_heal() -> void:
 	modulate = HEAL_FLASH_TINT
 	scale = Vector2(1.08, 1.08)
 	var tween := create_tween()
-	tween.tween_property(self, "modulate", Color.WHITE, 0.10)
-	tween.tween_property(self, "scale", Vector2.ONE, 0.12)
+	tween.tween_property(self, "modulate", Color.WHITE, BattleConfig.UNIT_EFFECT_COLOR_SECONDS)
+	tween.tween_property(self, "scale", Vector2.ONE, BattleConfig.UNIT_EFFECT_RECOVER_SECONDS)
 
 func on_buff() -> void:
 	_refresh_visual()
@@ -197,8 +197,8 @@ func on_buff() -> void:
 	modulate = BUFF_FLASH_TINT
 	scale = Vector2(1.1, 1.1)
 	var tween := create_tween()
-	tween.tween_property(self, "modulate", Color.WHITE, 0.10)
-	tween.tween_property(self, "scale", Vector2.ONE, 0.12)
+	tween.tween_property(self, "modulate", Color.WHITE, BattleConfig.UNIT_EFFECT_COLOR_SECONDS)
+	tween.tween_property(self, "scale", Vector2.ONE, BattleConfig.UNIT_EFFECT_RECOVER_SECONDS)
 
 func on_death() -> void:
 	_refresh_visual()
@@ -207,7 +207,7 @@ func on_death() -> void:
 		visual_3d.on_death()
 	scale = Vector2(0.84, 0.84)
 	var tween := create_tween()
-	tween.tween_property(self, "modulate:a", 0.0, 0.14)
+	tween.tween_property(self, "modulate:a", 0.0, BattleConfig.UNIT_DEATH_FADE_SECONDS)
 	tween.finished.connect(queue_free)
 
 func set_selected(value: bool) -> void:

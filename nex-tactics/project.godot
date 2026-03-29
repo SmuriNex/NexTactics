@@ -11,13 +11,14 @@ config_version=5
 [application]
 
 config/name="NexTactics"
-run/main_scene="res://scenes/battle/battle_scene.tscn"
+run/main_scene="res://scenes/ui/deck_select_screen.tscn"
 config/features=PackedStringArray("4.6", "GL Compatibility")
 config/icon="res://icon.svg"
 
 [autoload]
 
 BattleConfig="*res://autoload/battle_config.gd"
+GameData="*res://autoload/game_data.gd"
 GameDB="*res://autoload/game_db.gd"
 SignalBus="*res://autoload/signal_bus.gd"
 

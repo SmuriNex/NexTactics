@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "alpha_werewolf_hunting_howl"
+display_name = "Uivo de Caca"
+effect_type = 20
+mana_cost = 75
+cooldown = 0.0
+range = 1
+cleave_attack_count = 3
+description = "Os proximos 3 ataques basicos do lobisomem atingem inimigos adjacentes ao alvo principal."

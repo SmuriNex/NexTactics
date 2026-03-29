@@ -198,6 +198,7 @@ func _update_slot_visual(
     var affordable: bool = bool(data.get("affordable", false))
     var display_name: String = str(data.get("name", "Slot"))
     var cost: int = int(data.get("cost", 0))
+    var cost_label_text: String = str(data.get("cost_label", ""))
 
     if status.is_empty():
         if used:
@@ -205,13 +206,13 @@ func _update_slot_visual(
         elif affordable:
             status = "READY"
         else:
-            status = "NO ENERGY"
+            status = "NO GOLD"
 
     if is_support:
         slot_name_labels[slot_index].text = "S%d) %s" % [slot_index + 1, display_name]
     else:
         slot_name_labels[slot_index].text = "%d) %s" % [slot_index + 1, display_name]
-    slot_cost_labels[slot_index].text = "Custo: %d" % cost
+    slot_cost_labels[slot_index].text = cost_label_text if not cost_label_text.is_empty() else "Custo: %d" % cost
 
     if status == "USED":
         slot_status_labels[slot_index].text = "USADO"
@@ -222,8 +223,8 @@ func _update_slot_visual(
     elif status == "READY":
         slot_status_labels[slot_index].text = "PRONTO"
         slot_panels[slot_index].modulate = SUPPORT_SLOT_READY_COLOR if is_support else UNIT_SLOT_READY_COLOR
-    elif status == "NO ENERGY":
-        slot_status_labels[slot_index].text = "SEM ENERGIA"
+    elif status == "NO GOLD":
+        slot_status_labels[slot_index].text = "SEM OURO"
         slot_panels[slot_index].modulate = SUPPORT_SLOT_BLOCKED_COLOR if is_support else UNIT_SLOT_BLOCKED_COLOR
     else:
         slot_status_labels[slot_index].text = "INDISP."
