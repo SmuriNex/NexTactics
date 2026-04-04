@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "glacial_mage_ice_lance"
+display_name = "Lanca de Gelo"
+effect_type = 34
+mana_cost = 70
+cooldown = 0.0
+range = 3
+damage_amount = 4
+magic_power_multiplier = 1.45
+turn_skip_count = 1
+description = "Projeta uma lanca glacial que causa dano magico forte e atordoa o alvo."

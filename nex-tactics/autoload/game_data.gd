@@ -2,6 +2,7 @@ extends Node
 
 const DECK_ID_MORDOS := "mordos"
 const DECK_ID_THRAX := "thrax"
+const DECK_ID_LADY_OF_LAKE := "lady_of_lake"
 const DEFAULT_DECK_ID := DECK_ID_MORDOS
 const DEFAULT_OPPONENT_DECK_ID := DECK_ID_MORDOS
 
@@ -11,6 +12,7 @@ const DECK_SELECT_SCENE_PATH := "res://scenes/ui/deck_select_screen.tscn"
 const AVAILABLE_DECK_ORDER: Array[String] = [
 	DECK_ID_MORDOS,
 	DECK_ID_THRAX,
+	DECK_ID_LADY_OF_LAKE,
 ]
 
 const AVAILABLE_DECKS := {
@@ -22,6 +24,10 @@ const AVAILABLE_DECKS := {
 		"id": DECK_ID_THRAX,
 		"path": "res://data/decks/thrax_deck.tres",
 	},
+	DECK_ID_LADY_OF_LAKE: {
+		"id": DECK_ID_LADY_OF_LAKE,
+		"path": "res://data/decks/lady_of_lake_deck.tres",
+	},
 }
 
 var selected_deck_id: String = DEFAULT_DECK_ID
@@ -30,7 +36,7 @@ var _deck_cache: Dictionary = {}
 
 func get_available_decks() -> Array[Dictionary]:
 	var entries: Array[Dictionary] = []
-	for deck_id in AVAILABLE_DECK_ORDER:
+	for deck_id in get_available_deck_ids():
 		var deck_data: DeckData = load_deck_data(deck_id)
 		if deck_data == null:
 			continue
@@ -42,6 +48,19 @@ func get_available_decks() -> Array[Dictionary]:
 			"deck_data": deck_data,
 		})
 	return entries
+
+func get_available_deck_ids() -> Array[String]:
+	return AVAILABLE_DECK_ORDER.duplicate()
+
+func get_bot_cycle_deck_ids(preferred_player_deck_id: String = "") -> Array[String]:
+	var cycle_ids: Array[String] = []
+	for deck_id in AVAILABLE_DECK_ORDER:
+		if not preferred_player_deck_id.is_empty() and deck_id == preferred_player_deck_id:
+			continue
+		cycle_ids.append(deck_id)
+	if cycle_ids.is_empty():
+		return get_available_deck_ids()
+	return cycle_ids
 
 func get_selected_deck() -> DeckData:
 	return load_deck_data(selected_deck_id)

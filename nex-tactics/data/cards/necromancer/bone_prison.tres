@@ -5,10 +5,10 @@
 [resource]
 script = ExtResource("1_card_data")
 id = "bone_prison"
-display_name = "Bone Prison"
+display_name = "Prisao de Ossos"
 card_type = 2
 support_effect_type = 6
 cell_target_enemy_zone = true
 stun_turns = 2
 mana_gain_multiplier = 0.0
-description = "Trap support. If an enemy starts on the marked cell, it is locked and gains no mana."
+description = "Armadilha de tabuleiro. Se um inimigo iniciar na celula marcada, fica preso e nao ganha mana."

@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="CardData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/card_data.gd" id="1_card_data"]
+
+[resource]
+script = ExtResource("1_card_data")
+id = "siren_song"
+display_name = "Canto da Sereia"
+card_type = 2
+support_effect_type = 14
+summon_unit_path = "res://data/units/lady_of_lake/abyss_siren.tres"
+summon_current_hp_ratio = 0.5
+description = "Invocacao condicional. Se a primeira unidade a morrer for sua e voce nao tiver Sereia do Abismo em campo, uma sereia surge com metade da vida."

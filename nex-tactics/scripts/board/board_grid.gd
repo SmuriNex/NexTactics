@@ -27,8 +27,11 @@ var current_view_mode: int = GameEnums.BoardViewMode.FULL_BATTLE
 var focus_team_side: int = GameEnums.TeamSide.PLAYER
 var input_enabled: bool = true
 var target_highlight_coords: Array[Vector2i] = []
-var observer_mode_active: bool = false
-var observer_preview_units: Array[BattleUnitState] = []
+var observed_runtime_active: bool = false
+var observed_runtime_units: Array[BattleUnitState] = []
+var observed_runtime_viewer_team_side: int = GameEnums.TeamSide.PLAYER
+var observed_runtime_actors: Dictionary = {}
+var observed_runtime_display_coords: Dictionary = {}
 
 @onready var board_presentation_3d: BoardPresentation3D = get_node_or_null("../BoardPresentation3D") as BoardPresentation3D
 
@@ -133,13 +136,126 @@ func get_adjacent_coords(coord: Vector2i) -> Array[Vector2i]:
 	return adjacent
 
 func find_step_towards(from_coord: Vector2i, target_coord: Vector2i) -> Vector2i:
-	return resolve_step_towards(from_coord, target_coord).get("coord", from_coord)
+	var path: Array[Vector2i] = find_path_bfs(from_coord, target_coord, [], true)
+	if path.size() >= 2:
+		return path[1]
+	return from_coord
+
+func find_path_bfs(
+	start_coord: Vector2i,
+	target_coord: Vector2i,
+	forbidden_coords: Array[Vector2i] = [],
+	allow_target_occupied: bool = false
+) -> Array[Vector2i]:
+	if not is_valid_coord(start_coord) or not is_valid_coord(target_coord):
+		return []
+	if start_coord == target_coord:
+		return [start_coord]
+
+	var goal_lookup: Dictionary = {target_coord: true}
+	var forbidden_lookup: Dictionary = _build_coord_lookup(forbidden_coords)
+	return _find_path_to_goals_bfs(start_coord, goal_lookup, forbidden_lookup, allow_target_occupied)
+
+func find_path_to_attack_range(
+	start_coord: Vector2i,
+	target_coord: Vector2i,
+	attack_range: int,
+	forbidden_coords: Array[Vector2i] = []
+) -> Array[Vector2i]:
+	if not is_valid_coord(start_coord) or not is_valid_coord(target_coord):
+		return []
+	if distance_between_cells(start_coord, target_coord) <= attack_range:
+		return [start_coord]
+
+	var goal_lookup: Dictionary = {}
+	var forbidden_lookup: Dictionary = _build_coord_lookup(forbidden_coords)
+	for coord_key in cells.keys():
+		var candidate: Vector2i = coord_key
+		if distance_between_cells(candidate, target_coord) > attack_range:
+			continue
+		if forbidden_lookup.has(candidate):
+			continue
+		if candidate != start_coord and not is_cell_free(candidate):
+			continue
+		goal_lookup[candidate] = true
+
+	if goal_lookup.is_empty():
+		return []
+	return _find_path_to_goals_bfs(start_coord, goal_lookup, forbidden_lookup, false)
+
+func _find_path_to_goals_bfs(
+	start_coord: Vector2i,
+	goal_lookup: Dictionary,
+	forbidden_lookup: Dictionary,
+	allow_occupied_goals: bool
+) -> Array[Vector2i]:
+	if goal_lookup.has(start_coord):
+		return [start_coord]
+
+	var visited: Dictionary = {start_coord: true}
+	var came_from: Dictionary = {}
+	var frontier: Array[Vector2i] = [start_coord]
+	var frontier_index: int = 0
+
+	while frontier_index < frontier.size():
+		var current: Vector2i = frontier[frontier_index]
+		frontier_index += 1
+
+		for neighbor in get_adjacent_coords(current):
+			if visited.has(neighbor):
+				continue
+			if forbidden_lookup.has(neighbor):
+				continue
+
+			var is_goal: bool = goal_lookup.has(neighbor)
+			if not _is_bfs_walkable(neighbor, start_coord, is_goal, allow_occupied_goals):
+				continue
+
+			visited[neighbor] = true
+			came_from[neighbor] = current
+			if is_goal:
+				return _rebuild_bfs_path(came_from, start_coord, neighbor)
+			frontier.append(neighbor)
+
+	return []
+
+func _is_bfs_walkable(
+	coord: Vector2i,
+	start_coord: Vector2i,
+	is_goal: bool,
+	allow_occupied_goals: bool
+) -> bool:
+	if not is_valid_coord(coord):
+		return false
+	if coord == start_coord:
+		return true
+	if is_goal and allow_occupied_goals:
+		var goal_cell: GridCellData = get_cell(coord)
+		return goal_cell != null and not goal_cell.blocked
+	return is_cell_free(coord)
+
+func _rebuild_bfs_path(came_from: Dictionary, start_coord: Vector2i, end_coord: Vector2i) -> Array[Vector2i]:
+	var path: Array[Vector2i] = [end_coord]
+	var current: Vector2i = end_coord
+	while current != start_coord:
+		if not came_from.has(current):
+			return []
+		current = came_from[current]
+		path.push_front(current)
+	return path
+
+func _build_coord_lookup(coords: Array[Vector2i]) -> Dictionary:
+	var lookup: Dictionary = {}
+	for coord in coords:
+		lookup[coord] = true
+	return lookup
 
 func resolve_step_towards(
 	from_coord: Vector2i,
 	target_coord: Vector2i,
 	team_side: int = -1,
-	forbidden_coords: Array[Vector2i] = []
+	forbidden_coords: Array[Vector2i] = [],
+	prefer_wait_on_fallback: bool = false
 ) -> Dictionary:
 	var current_distance: int = distance_between_cells(from_coord, target_coord)
 	var best_advance_coord: Vector2i = Vector2i(-1, -1)
@@ -174,6 +290,8 @@ func resolve_step_towards(
 		return {"coord": best_advance_coord, "move_type": "advance"}
 	if is_valid_coord(best_side_coord):
 		return {"coord": best_side_coord, "move_type": "sidestep"}
+	if prefer_wait_on_fallback and is_valid_coord(best_fallback_coord):
+		return {"coord": from_coord, "move_type": "wait"}
 	if is_valid_coord(best_fallback_coord):
 		return {"coord": best_fallback_coord, "move_type": "fallback"}
 	return {"coord": from_coord, "move_type": "blocked"}
@@ -213,6 +331,7 @@ func free_cell(coord: Vector2i) -> bool:
 	if not cell:
 		return false
 	cell.occupant = null
+	cell.blocked = false
 	return true
 
 func spawn_unit(state: BattleUnitState) -> bool:
@@ -334,59 +453,70 @@ func clear_target_highlights() -> void:
 		board_presentation_3d.clear_target_highlights()
 	queue_redraw()
 
-func show_observer_preview(preview_units: Array[BattleUnitState]) -> void:
-	clear_observer_preview()
-	observer_mode_active = true
+func bind_observed_runtime(
+	unit_states: Array[BattleUnitState],
+	viewer_team_side: int = GameEnums.TeamSide.PLAYER
+) -> void:
+	clear_observed_runtime()
+	observed_runtime_active = true
+	observed_runtime_units = unit_states
+	observed_runtime_viewer_team_side = viewer_team_side
 	_set_runtime_unit_actor_visibility(false)
-	for preview_state in preview_units:
-		if preview_state == null or preview_state.unit_data == null:
-			continue
-		var preview_actor := UNIT_ACTOR_SCENE.instantiate() as UnitActor
-		if preview_actor == null:
-			continue
-		add_child(preview_actor)
-		preview_actor.setup(preview_state, CELL_SIZE, board_presentation_3d)
-		preview_actor.update_from_grid_coord(preview_state.coord, CELL_SIZE, false)
-		preview_state.actor = preview_actor
-		observer_preview_units.append(preview_state)
+	_sync_observed_runtime_actors(false)
 	_refresh_unit_visibility()
 	queue_redraw()
 
-func clear_observer_preview() -> void:
-	for preview_state in observer_preview_units:
-		if preview_state == null or preview_state.actor == null:
-			continue
-		preview_state.actor.queue_free()
-		preview_state.actor = null
-	observer_preview_units.clear()
-	observer_mode_active = false
+func refresh_observed_runtime(
+	animate: bool = true,
+	viewer_team_side: int = -1
+) -> void:
+	if not observed_runtime_active:
+		return
+	if viewer_team_side >= 0:
+		observed_runtime_viewer_team_side = viewer_team_side
+	_sync_observed_runtime_actors(animate)
+	_refresh_unit_visibility()
+	queue_redraw()
+
+func clear_observed_runtime() -> void:
+	for actor_key in observed_runtime_actors.keys():
+		_release_observed_runtime_actor(str(actor_key))
+	observed_runtime_units = []
+	observed_runtime_active = false
+	observed_runtime_viewer_team_side = GameEnums.TeamSide.PLAYER
 	_set_runtime_unit_actor_visibility(true)
 	_refresh_unit_visibility()
 	queue_redraw()
 
 func is_observer_mode_active() -> bool:
-	return observer_mode_active
+	return observed_runtime_active
 
-func get_observer_unit_at(coord: Vector2i) -> BattleUnitState:
-	for preview_state in observer_preview_units:
-		if preview_state == null:
+func get_observed_unit_at(coord: Vector2i) -> BattleUnitState:
+	if not observed_runtime_active:
+		return null
+	for observed_state in observed_runtime_units:
+		if observed_state == null or not observed_state.can_act():
 			continue
-		if preview_state.coord == coord:
-			return preview_state
+		if not is_observed_unit_visible_in_current_view(observed_state):
+			continue
+		if get_observed_display_coord(observed_state) == coord:
+			return observed_state
 	return null
 
-func set_observer_overlay_suppressed(value: bool) -> void:
-	for preview_state in observer_preview_units:
-		if preview_state == null or preview_state.actor == null:
+func set_observed_overlay_suppressed(value: bool) -> void:
+	for actor_variant in observed_runtime_actors.values():
+		var actor: UnitActor = actor_variant as UnitActor
+		if actor == null:
 			continue
-		preview_state.actor.set_overlay_suppressed(value)
+		actor.set_overlay_suppressed(value)
 
 func _refresh_unit_visibility() -> void:
-	if observer_mode_active:
-		for preview_state in observer_preview_units:
-			if preview_state == null or preview_state.actor == null:
+	if observed_runtime_active:
+		for actor_variant in observed_runtime_actors.values():
+			var actor: UnitActor = actor_variant as UnitActor
+			if actor == null:
 				continue
-			preview_state.actor.visible = true
+			actor.visible = is_observed_unit_visible_in_current_view(actor.state)
 		_set_runtime_unit_actor_visibility(false)
 		return
 
@@ -443,7 +573,7 @@ func _draw() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if not input_enabled:
 		return
-	if observer_mode_active:
+	if observed_runtime_active:
 		return
 	if event is InputEventMouseButton:
 		var mouse_event := event as InputEventMouseButton
@@ -479,3 +609,78 @@ func _set_runtime_unit_actor_visibility(value: bool) -> void:
 		if occupant == null or occupant.actor == null:
 			continue
 		occupant.actor.visible = value and _is_unit_visible_in_current_view(occupant)
+
+func _sync_observed_runtime_actors(animate: bool) -> void:
+	var active_actor_keys: Dictionary = {}
+	for observed_state in observed_runtime_units:
+		if observed_state == null or observed_state.unit_data == null or not observed_state.can_act():
+			continue
+
+		var actor_key: String = _observed_runtime_actor_key(observed_state)
+		active_actor_keys[actor_key] = true
+		var display_team_side: int = get_observed_display_team_side(observed_state)
+
+		var actor: UnitActor = observed_runtime_actors.get(actor_key, null) as UnitActor
+		if actor == null:
+			actor = UNIT_ACTOR_SCENE.instantiate() as UnitActor
+			if actor == null:
+				continue
+			add_child(actor)
+			actor.setup(observed_state, CELL_SIZE, board_presentation_3d)
+			actor.set_display_team_side_override(display_team_side)
+			observed_runtime_actors[actor_key] = actor
+			observed_runtime_display_coords[actor_key] = Vector2i(-1, -1)
+
+		var display_coord: Vector2i = get_observed_display_coord(observed_state)
+		var previous_coord: Vector2i = observed_runtime_display_coords.get(actor_key, Vector2i(-1, -1))
+		if previous_coord != display_coord:
+			actor.update_from_grid_coord(
+				display_coord,
+				CELL_SIZE,
+				animate and previous_coord != Vector2i(-1, -1),
+				false
+			)
+			observed_runtime_display_coords[actor_key] = display_coord
+		actor.set_display_team_side_override(display_team_side)
+		actor.refresh_from_state()
+		actor.visible = is_observed_unit_visible_in_current_view(observed_state)
+
+	for actor_key_variant in observed_runtime_actors.keys():
+		var actor_key: String = str(actor_key_variant)
+		if active_actor_keys.has(actor_key):
+			continue
+		_release_observed_runtime_actor(actor_key)
+
+func _release_observed_runtime_actor(actor_key: String) -> void:
+	var actor: UnitActor = observed_runtime_actors.get(actor_key, null) as UnitActor
+	if actor != null:
+		actor.queue_free()
+	observed_runtime_actors.erase(actor_key)
+	observed_runtime_display_coords.erase(actor_key)
+
+func _observed_runtime_actor_key(unit_state: BattleUnitState) -> String:
+	if unit_state == null:
+		return ""
+	return str(unit_state.get_instance_id())
+
+func get_observed_viewer_team_side() -> int:
+	return observed_runtime_viewer_team_side
+
+func get_observed_display_team_side(unit_state: BattleUnitState) -> int:
+	if unit_state == null:
+		return GameEnums.TeamSide.PLAYER
+	return GameEnums.TeamSide.PLAYER if unit_state.team_side == observed_runtime_viewer_team_side else GameEnums.TeamSide.ENEMY
+
+func get_observed_display_coord(unit_state: BattleUnitState) -> Vector2i:
+	if unit_state == null:
+		return Vector2i(-1, -1)
+	if observed_runtime_viewer_team_side != GameEnums.TeamSide.ENEMY:
+		return unit_state.coord
+	return Vector2i(unit_state.coord.x, BattleConfig.BOARD_HEIGHT - 1 - unit_state.coord.y)
+
+func is_observed_unit_visible_in_current_view(unit_state: BattleUnitState) -> bool:
+	if unit_state == null:
+		return false
+	if current_view_mode == GameEnums.BoardViewMode.FULL_BATTLE:
+		return true
+	return get_observed_display_team_side(unit_state) == focus_team_side

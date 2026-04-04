@@ -1,5 +1,7 @@
-extends Resource
+﻿extends Resource
 class_name UnitData
+
+const BATTLE_CONFIG_SCRIPT := preload('res://autoload/battle_config.gd')
 
 @export var id: String = ""
 @export var display_name: String = ""
@@ -8,6 +10,9 @@ class_name UnitData
 @export var class_label: String = ""
 @export var class_short_label: String = ""
 @export var cost: int = 1
+
+func get_effective_cost() -> int:
+	return BATTLE_CONFIG_SCRIPT.adjust_unit_cost(cost)
 
 @export var max_hp: int = 10
 @export var physical_attack: int = 3
@@ -24,3 +29,4 @@ class_name UnitData
 @export var master_skill_data: SkillData
 
 @export var description: String = ""
+

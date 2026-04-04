@@ -42,6 +42,39 @@ theme_override_font_sizes/font_size = 13
 text = "Oponente     -"
 autowrap_mode = 3
 
+[node name="ObserverBannerPanelContainer" type="PanelContainer" parent="."]
+visible = false
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -220.0
+offset_top = 8.0
+offset_right = 220.0
+offset_bottom = 46.0
+grow_horizontal = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="ObserverBannerPanelContainer"]
+layout_mode = 2
+theme_override_constants/margin_left = 10
+theme_override_constants/margin_top = 6
+theme_override_constants/margin_right = 10
+theme_override_constants/margin_bottom = 6
+
+[node name="HBoxContainer" type="HBoxContainer" parent="ObserverBannerPanelContainer/MarginContainer"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="ObserverBannerLabel" type="Label" parent="ObserverBannerPanelContainer/MarginContainer/HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 13
+text = "OBSERVANDO: -"
+autowrap_mode = 3
+
+[node name="ObserverReturnButton" type="Button" parent="ObserverBannerPanelContainer/MarginContainer/HBoxContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Voltar para meu tabuleiro"
+
 [node name="InfoPanelContainer" type="PanelContainer" parent="." unique_id=1956862205]
 anchors_preset = 1
 anchor_left = 1.0
@@ -205,48 +238,6 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 12
 text = "-"
 autowrap_mode = 3
-
-[node name="ObservedBoardSectionPanel" type="PanelContainer" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer" unique_id=969006143]
-visible = false
-layout_mode = 2
-
-[node name="MarginContainer" type="MarginContainer" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/ObservedBoardSectionPanel" unique_id=1757958959]
-layout_mode = 2
-theme_override_constants/margin_left = 8
-theme_override_constants/margin_top = 8
-theme_override_constants/margin_right = 8
-theme_override_constants/margin_bottom = 8
-
-[node name="VBoxContainer" type="VBoxContainer" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/ObservedBoardSectionPanel/MarginContainer" unique_id=1627081067]
-layout_mode = 2
-theme_override_constants/separation = 6
-
-[node name="ObservedBoardSectionTitleLabel" type="Label" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/ObservedBoardSectionPanel/MarginContainer/VBoxContainer" unique_id=1299248984]
-layout_mode = 2
-theme_override_font_sizes/font_size = 12
-text = "TABULEIRO OBSERVADO"
-
-[node name="ObservedBoardMetaLabel" type="Label" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/ObservedBoardSectionPanel/MarginContainer/VBoxContainer" unique_id=890580304]
-layout_mode = 2
-theme_override_font_sizes/font_size = 12
-text = "-"
-autowrap_mode = 3
-
-[node name="ObservedBoardGrid" type="GridContainer" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/ObservedBoardSectionPanel/MarginContainer/VBoxContainer" unique_id=472170085]
-layout_mode = 2
-theme_override_constants/h_separation = 4
-theme_override_constants/v_separation = 4
-columns = 7
-
-[node name="ObservedBoardHintLabel" type="Label" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/ObservedBoardSectionPanel/MarginContainer/VBoxContainer" unique_id=1766155162]
-layout_mode = 2
-theme_override_font_sizes/font_size = 11
-text = "-"
-autowrap_mode = 3
-
-[node name="ObservedBoardBackButton" type="Button" parent="InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/ObservedBoardSectionPanel/MarginContainer/VBoxContainer" unique_id=930333084]
-layout_mode = 2
-text = "Voltar para meu tabuleiro"
 
 [node name="PlayerSidebarPanelContainer" type="PanelContainer" parent="." unique_id=2013149901]
 offset_left = 1.0

@@ -1,0 +1,26 @@
+[gd_resource type="Resource" script_class="UnitData" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/unit_data.gd" id="1_unit_data"]
+[ext_resource type="Resource" path="res://data/skills/lady_of_lake/lady_of_lake_torrential_capsule.tres" id="2_master_skill"]
+
+[resource]
+script = ExtResource("1_unit_data")
+id = "lady_of_lake_master"
+display_name = "Dama do Lago"
+race = 3
+class_type = 3
+class_label = "Suporte"
+class_short_label = "SUP"
+cost = 0
+max_hp = 24
+physical_attack = 1
+magic_attack = 10
+physical_defense = 1
+magic_defense = 7
+attack_range = 3
+crit_chance = 0.05
+mana_max = 80
+mana_gain_on_attack = 18
+mana_gain_on_hit = 10
+master_skill_data = ExtResource("2_master_skill")
+description = "Mestra fada de retaguarda que sustenta aliados, espalha lentidao e vence por controle e desgaste."

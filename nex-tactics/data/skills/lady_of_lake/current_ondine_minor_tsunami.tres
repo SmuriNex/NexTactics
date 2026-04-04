@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "current_ondine_minor_tsunami"
+display_name = "Tsunami Menor"
+effect_type = 35
+mana_cost = 70
+cooldown = 0.0
+range = 3
+damage_amount = 3
+magic_power_multiplier = 1.05
+area_radius = 1
+remove_positive_buffs = true
+description = "Abre uma onda em cone que causa dano magico e remove buffs positivos dos inimigos atingidos."

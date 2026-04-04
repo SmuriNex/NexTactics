@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "coral_guardian_frost_armor"
+display_name = "Armadura de Geada"
+effect_type = 30
+mana_cost = 75
+cooldown = 0.0
+range = 1
+blocked_basic_attack_count = 3
+retaliate_action_charge_multiplier = 0.5
+retaliate_duration_turns = 2
+description = "Absorve os proximos tres ataques fisicos e desacelera inimigos que o acertam corpo a corpo."

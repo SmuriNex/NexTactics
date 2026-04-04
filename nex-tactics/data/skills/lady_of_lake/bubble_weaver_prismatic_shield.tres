@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "bubble_weaver_prismatic_shield"
+display_name = "Escudo Prismatico"
+effect_type = 37
+mana_cost = 65
+cooldown = 0.0
+range = 2
+magic_shield_amount = 14
+duration_turns = 4
+description = "Concede um escudo forte contra dano magico ao aliado mais ferido por perto."

@@ -1,0 +1,26 @@
+[gd_resource type="Resource" script_class="UnitData" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/unit_data.gd" id="1_unit_data"]
+[ext_resource type="Resource" path="res://data/skills/lady_of_lake/rain_dancer_blade_dance.tres" id="2_skill_data"]
+
+[resource]
+script = ExtResource("1_unit_data")
+id = "rain_dancer"
+display_name = "Dancarina da Chuva"
+race = 3
+class_type = 0
+class_label = "Atacante"
+class_short_label = "ATQ"
+cost = 3
+max_hp = 18
+physical_attack = 7
+magic_attack = 2
+physical_defense = 3
+magic_defense = 3
+attack_range = 1
+crit_chance = 0.12
+mana_max = 65
+mana_gain_on_attack = 14
+mana_gain_on_hit = 8
+skill_data = ExtResource("2_skill_data")
+description = "Atacante fada que entra no front, gira em area e capitaliza qualquer janela de lentidao criada pelo deck."

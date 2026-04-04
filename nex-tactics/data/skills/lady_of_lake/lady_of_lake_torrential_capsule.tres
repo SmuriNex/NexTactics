@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "lady_of_lake_torrential_capsule"
+display_name = "Capsula Torrencial"
+effect_type = 27
+mana_cost = 80
+cooldown = 0.0
+range = 3
+damage_amount = 5
+magic_power_multiplier = 1.7
+duration_turns = 5
+action_charge_multiplier = 0.5
+description = "Atinge o inimigo mais forte da luta, causa dano magico massivo e o desacelera drasticamente."

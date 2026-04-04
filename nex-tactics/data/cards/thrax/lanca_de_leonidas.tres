@@ -1,4 +1,4 @@
-﻿[gd_resource type="Resource" script_class="CardData" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="CardData" load_steps=2 format=3]
 
 [ext_resource type="Script" path="res://scripts/data/card_data.gd" id="1_card_data"]
 
@@ -12,4 +12,3 @@ physical_attack_multiplier = 1.4
 effect_duration_turns = 1
 attack_range_bonus = 1
 description = "Item. Concede +40% de ataque fisico e +1 de alcance basico durante a rodada."
-

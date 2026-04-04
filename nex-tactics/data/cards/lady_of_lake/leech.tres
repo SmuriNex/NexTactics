@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="CardData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/card_data.gd" id="1_card_data"]
+
+[resource]
+script = ExtResource("1_card_data")
+id = "leech"
+display_name = "Sanguessuga"
+card_type = 2
+support_effect_type = 16
+effect_duration_turns = 5
+lifesteal_ratio = 0.33
+description = "Item equipavel. A unidade alvo converte cerca de um terco do dano causado em vida."

@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "mist_archer_torrential_arrow"
+display_name = "Flecha Torrencial"
+effect_type = 32
+mana_cost = 60
+cooldown = 0.0
+range = 4
+damage_amount = 2
+physical_power_multiplier = 1.15
+area_radius = 4
+duration_turns = 3
+physical_defense_multiplier = 0.7
+description = "Dispara uma flecha em linha reta, fere os inimigos atravessados e reduz a defesa fisica deles."

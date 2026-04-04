@@ -1,0 +1,26 @@
+[gd_resource type="Resource" script_class="UnitData" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/unit_data.gd" id="1_unit_data"]
+[ext_resource type="Resource" path="res://data/skills/lady_of_lake/tide_squire_riptide.tres" id="2_skill_data"]
+
+[resource]
+script = ExtResource("1_unit_data")
+id = "tide_squire"
+display_name = "Escudeiro das Mares"
+race = 1
+class_type = 1
+class_label = "Tanque"
+class_short_label = "TNK"
+cost = 3
+max_hp = 22
+physical_attack = 5
+magic_attack = 1
+physical_defense = 5
+magic_defense = 3
+attack_range = 1
+crit_chance = 0.04
+mana_max = 65
+mana_gain_on_attack = 11
+mana_gain_on_hit = 10
+skill_data = ExtResource("2_skill_data")
+description = "Tanque elfico de utilidade que abre espaco com empurrao e interrupcao curta."

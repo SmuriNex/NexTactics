@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "breeze_cleric_tailwind"
+display_name = "Vento a Favor"
+effect_type = 39
+mana_cost = 55
+cooldown = 0.0
+range = 2
+duration_turns = 3
+action_charge_multiplier = 1.4
+description = "Acelera o proprio clerigo e os aliados posicionados ao lado ou atras dele."

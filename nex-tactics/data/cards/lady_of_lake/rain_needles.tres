@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="CardData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/card_data.gd" id="1_card_data"]
+
+[resource]
+script = ExtResource("1_card_data")
+id = "rain_needles"
+display_name = "Agulhas de Chuva"
+card_type = 2
+support_effect_type = 13
+damage_amount = 2
+periodic_interval_turns = 2
+effect_repeat_count = 5
+description = "Feitico de campo. Agulhas de chuva atingem inimigos aleatorios em pequenas instancias de dano magico."

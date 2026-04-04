@@ -1,0 +1,26 @@
+[gd_resource type="Resource" script_class="UnitData" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/unit_data.gd" id="1_unit_data"]
+[ext_resource type="Resource" path="res://data/skills/lady_of_lake/mist_archer_torrential_arrow.tres" id="2_skill_data"]
+
+[resource]
+script = ExtResource("1_unit_data")
+id = "mist_archer"
+display_name = "Arqueiro da Nevoa"
+race = 1
+class_type = 2
+class_label = "Atirador"
+class_short_label = "ATD"
+cost = 2
+max_hp = 14
+physical_attack = 8
+magic_attack = 1
+physical_defense = 2
+magic_defense = 2
+attack_range = 4
+crit_chance = 0.10
+mana_max = 60
+mana_gain_on_attack = 13
+mana_gain_on_hit = 7
+skill_data = ExtResource("2_skill_data")
+description = "Atirador elfico que abre linhas com flechas de pressao e ajuda o deck a desgastar front e backline."

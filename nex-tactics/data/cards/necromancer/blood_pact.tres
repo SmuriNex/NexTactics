@@ -9,4 +9,4 @@ display_name = "Blood Pact"
 card_type = 2
 support_effect_type = 5
 mana_ratio_transfer_on_death = 0.4
-description = "Trigger support. When the marked ally dies, the Master gains 40% mana."
+description = "Gatilho sombrio. Quando o aliado marcado morre, o Mestre recebe 40% de mana."

@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "spring_priest_purifying_waters"
+display_name = "Aguas Purificadoras"
+effect_type = 38
+mana_cost = 55
+cooldown = 0.0
+range = 1
+description = "Remove debuffs negativos de aliados adjacentes e recompoe a linha de sustentacao."

@@ -1,8 +1,11 @@
 extends RefCounted
 class_name PairingResolver
 
+var last_bye_player_ids: Array[String] = []
+
 func build_round_pairings(player_ids: Array[String], round_number: int) -> Array[Dictionary]:
 	var ids: Array[String] = player_ids.duplicate()
+	last_bye_player_ids.clear()
 	if ids.is_empty():
 		return []
 
@@ -24,6 +27,9 @@ func build_round_pairings(player_ids: Array[String], round_number: int) -> Array
 		var player_a: String = rotation[index]
 		var player_b: String = rotation[rotation.size() - 1 - index]
 		if player_a == "BYE" or player_b == "BYE":
+			var bye_player_id: String = player_b if player_a == "BYE" else player_a
+			if not bye_player_id.is_empty() and bye_player_id != "BYE" and not last_bye_player_ids.has(bye_player_id):
+				last_bye_player_ids.append(bye_player_id)
 			continue
 		pairings.append({
 			"table_index": index,
@@ -32,3 +38,6 @@ func build_round_pairings(player_ids: Array[String], round_number: int) -> Array
 		})
 
 	return pairings
+
+func get_last_bye_player_ids() -> Array[String]:
+	return last_bye_player_ids.duplicate()

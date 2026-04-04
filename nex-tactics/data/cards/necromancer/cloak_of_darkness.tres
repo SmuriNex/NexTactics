@@ -5,8 +5,8 @@
 [resource]
 script = ExtResource("1_card_data")
 id = "cloak_of_darkness"
-display_name = "Cloak of Darkness"
+display_name = "Manto da Escuridao"
 card_type = 2
 support_effect_type = 3
 stealth_turns = 2
-description = "Equip support. The target starts the battle hidden in stealth."
+description = "Item sombrio. A unidade alvo inicia a luta escondida em furtividade."

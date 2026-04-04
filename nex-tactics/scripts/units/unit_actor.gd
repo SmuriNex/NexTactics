@@ -26,6 +26,7 @@ var visual_death_started: bool = false
 var screen_anchor_visible: bool = true
 var overlay_visual_scale: float = 1.0
 var overlay_suppressed: bool = false
+var display_team_side_override: int = -1
 
 @onready var name_label: Label = $NameLabel
 @onready var tag_label: Label = $TagLabel
@@ -43,6 +44,7 @@ func setup(
 	use_3d_presentation = board_presentation_3d != null
 	if board_presentation_3d != null:
 		visual_3d = board_presentation_3d.create_unit_visual(state)
+		visual_3d.set_display_team_side_override(display_team_side_override)
 		visual_3d.visible = visible
 	set_process(use_3d_presentation)
 	_configure_labels()
@@ -52,7 +54,12 @@ func setup(
 func refresh_from_state() -> void:
 	_refresh_visual()
 
-func update_from_grid_coord(grid_coord: Vector2i, p_cell_size: float = -1.0, animate: bool = true) -> void:
+func update_from_grid_coord(
+	grid_coord: Vector2i,
+	p_cell_size: float = -1.0,
+	animate: bool = true,
+	write_back_state: bool = true
+) -> void:
 	if p_cell_size > 0.0:
 		cell_size = p_cell_size
 
@@ -63,7 +70,7 @@ func update_from_grid_coord(grid_coord: Vector2i, p_cell_size: float = -1.0, ani
 	else:
 		position = target_position
 
-	if state != null:
+	if state != null and write_back_state:
 		state.coord = grid_coord
 
 	if visual_3d != null:
@@ -88,9 +95,16 @@ func _short_unit_name() -> String:
 	return full_name.substr(0, 12)
 
 func _team_color() -> Color:
-	if state != null and state.team_side == GameEnums.TeamSide.ENEMY:
+	if _effective_team_side() == GameEnums.TeamSide.ENEMY:
 		return ENEMY_COLOR
 	return PLAYER_COLOR
+
+func _effective_team_side() -> int:
+	if display_team_side_override >= 0:
+		return display_team_side_override
+	if state != null:
+		return state.team_side
+	return GameEnums.TeamSide.PLAYER
 
 func _race_color() -> Color:
 	if state == null or state.unit_data == null:
@@ -222,6 +236,14 @@ func set_overlay_suppressed(value: bool) -> void:
 	overlay_suppressed = value
 	_set_overlay_labels_visible(screen_anchor_visible)
 	queue_redraw()
+
+func set_display_team_side_override(team_side: int = -1) -> void:
+	if display_team_side_override == team_side:
+		return
+	display_team_side_override = team_side
+	if visual_3d != null:
+		visual_3d.set_display_team_side_override(team_side)
+	_refresh_visual()
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_VISIBILITY_CHANGED and visual_3d != null:

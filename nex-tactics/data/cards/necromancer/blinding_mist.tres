@@ -5,11 +5,11 @@
 [resource]
 script = ExtResource("1_card_data")
 id = "blinding_mist"
-display_name = "Blinding Mist"
+display_name = "Nevoa Cegante"
 card_type = 2
 support_effect_type = 4
 effect_duration_turns = 2
 delayed_trigger_min_turn = 3
 delayed_trigger_max_turn = 8
 physical_miss_chance = 0.5
-description = "Field spell. A delayed mist makes enemy physical attacks unreliable."
+description = "Feitico de campo. Uma nevoa tardia torna os ataques fisicos inimigos pouco confiaveis."

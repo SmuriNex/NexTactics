@@ -1,6 +1,9 @@
 extends RefCounted
 class_name BattleUnitState
 
+const TARGET_LOCK_MIN_TURNS := 2
+const POSITION_HISTORY_LIMIT := 4
+
 var unit_data: UnitData
 var current_hp: int = 0
 var current_mana: int = 0
@@ -50,8 +53,12 @@ var received_physical_damage_multiplier_status: float = 1.0
 var received_physical_damage_turns: int = 0
 var current_physical_shield: int = 0
 var physical_shield_turns: int = 0
+var current_magic_shield: int = 0
+var magic_shield_turns: int = 0
 var melee_reflect_damage: int = 0
 var reflect_turns: int = 0
+var melee_attacker_action_multiplier: float = 1.0
+var melee_attacker_action_turns: int = 0
 var guaranteed_magic_crit_hits: int = 0
 var death_mana_ratio_to_master: float = 0.0
 var blocked_basic_attack_count: int = 0
@@ -62,6 +69,17 @@ var attack_range_bonus_turns: int = 0
 var cleave_attacks_remaining: int = 0
 var forced_target_instance_id: int = -1
 var forced_target_turns: int = 0
+var charm_source_instance_id: int = -1
+var charm_turns: int = 0
+var current_target: BattleUnitState = null
+var target_lock_timer: int = 0
+var stuck_counter: int = 0
+var last_positions: Array[Vector2i] = []
+var last_position: Vector2i = Vector2i(-1, -1)
+var previous_position: Vector2i = Vector2i(-1, -1)
+var previous_target_key: String = ""
+var bounce_counter: int = 0
+var retarget_cooldown_turns: int = 0
 var last_move_origin: Vector2i = Vector2i(-1, -1)
 var last_move_destination: Vector2i = Vector2i(-1, -1)
 var last_move_target_key: String = ""
@@ -100,6 +118,7 @@ func setup_from_unit_data(
 	clear_status_effects()
 	clear_round_modifiers()
 	clear_navigation_memory()
+	remember_position_sample(coord)
 	return self
 
 func get_display_name() -> String:
@@ -224,14 +243,21 @@ func is_tank_unit() -> bool:
 func is_attacker_unit() -> bool:
 	return unit_data != null and unit_data.class_type == GameEnums.ClassType.ATTACKER
 
+func is_stealth_unit() -> bool:
+	return unit_data != null and unit_data.class_type == GameEnums.ClassType.STEALTH
+
 func is_sniper_unit() -> bool:
-	return unit_data != null and (
-		unit_data.class_type == GameEnums.ClassType.SNIPER
-		or unit_data.class_type == GameEnums.ClassType.STEALTH
-	)
+	return unit_data != null and unit_data.class_type == GameEnums.ClassType.SNIPER
 
 func is_support_unit() -> bool:
 	return unit_data != null and unit_data.class_type == GameEnums.ClassType.SUPPORT
+
+func is_ranged_unit() -> bool:
+	return unit_data != null and (
+		unit_data.class_type == GameEnums.ClassType.SNIPER
+		or unit_data.class_type == GameEnums.ClassType.SUPPORT
+		or get_attack_range() >= 3
+	)
 
 func get_race_attack_bonus() -> int:
 	return get_race_physical_attack_bonus() + get_race_magic_attack_bonus()
@@ -309,15 +335,29 @@ func get_magic_defense_value() -> int:
 func get_defense_value() -> int:
 	return get_physical_defense_value() + get_magic_defense_value()
 
-func get_class_range_bonus() -> int:
-	if is_sniper_unit():
+func get_base_range_by_class() -> int:
+	if unit_data == null:
 		return 1
-	return 0
+
+	match unit_data.class_type:
+		GameEnums.ClassType.TANK:
+			return 1
+		GameEnums.ClassType.ATTACKER:
+			return 1
+		GameEnums.ClassType.SUPPORT:
+			return 2
+		GameEnums.ClassType.STEALTH:
+			return 3
+		GameEnums.ClassType.SNIPER:
+			return 4
+		_:
+			return 1
 
 func get_attack_range() -> int:
 	if unit_data == null:
 		return 1
-	return maxi(1, unit_data.attack_range + get_class_range_bonus() + attack_range_bonus_status)
+	var base_range: int = unit_data.attack_range if unit_data.attack_range > 0 else get_base_range_by_class()
+	return maxi(1, base_range + attack_range_bonus_status)
 
 func get_race_crit_bonus() -> float:
 	return 0.0
@@ -468,6 +508,14 @@ func clear_deck_passive_modifiers() -> void:
 	deck_passive_magic_defense = 0
 
 func clear_navigation_memory() -> void:
+	clear_target_lock()
+	stuck_counter = 0
+	last_positions.clear()
+	last_position = Vector2i(-1, -1)
+	previous_position = Vector2i(-1, -1)
+	previous_target_key = ""
+	bounce_counter = 0
+	retarget_cooldown_turns = 0
 	last_move_origin = Vector2i(-1, -1)
 	last_move_destination = Vector2i(-1, -1)
 	last_move_target_key = ""
@@ -475,11 +523,74 @@ func clear_navigation_memory() -> void:
 	blocked_target_key = ""
 	blocked_target_turns = 0
 
+func set_current_target(target: BattleUnitState, lock_turns: int = TARGET_LOCK_MIN_TURNS) -> void:
+	if target == current_target:
+		target_lock_timer = maxi(target_lock_timer, lock_turns)
+		return
+	current_target = target
+	target_lock_timer = maxi(0, lock_turns) if target != null else 0
+	stuck_counter = 0
+
+func clear_target_lock() -> void:
+	current_target = null
+	target_lock_timer = 0
+
+func has_valid_current_target() -> bool:
+	return current_target != null and current_target.can_act()
+
+func remember_position_sample(sample_coord: Vector2i) -> void:
+	if sample_coord == Vector2i(-1, -1):
+		return
+	last_positions.append(sample_coord)
+	while last_positions.size() > POSITION_HISTORY_LIMIT:
+		last_positions.remove_at(0)
+
+func has_position_loop() -> bool:
+	if last_positions.size() >= 3:
+		var last_index: int = last_positions.size() - 1
+		if last_positions[last_index] == last_positions[last_index - 2] and last_positions[last_index - 1] != last_positions[last_index]:
+			return true
+	if last_positions.size() >= 4:
+		var max_index: int = last_positions.size() - 1
+		if (
+			last_positions[max_index] == last_positions[max_index - 2]
+			and last_positions[max_index - 1] == last_positions[max_index - 3]
+			and last_positions[max_index] != last_positions[max_index - 1]
+		):
+			return true
+	return false
+
+func mark_stuck() -> void:
+	stuck_counter += 1
+	remember_position_sample(coord)
+
+func clear_stuck() -> void:
+	stuck_counter = 0
+
+func should_force_retarget(stuck_limit: int) -> bool:
+	return stuck_counter > stuck_limit or has_position_loop()
+
 func remember_navigation_move(target_key: String, move_type: String, from_coord: Vector2i, to_coord: Vector2i) -> void:
+	var bounced_back: bool = (
+		last_move_target_key == target_key
+		and last_move_origin == to_coord
+		and last_move_destination == from_coord
+	)
+	previous_position = last_position
+	last_position = from_coord
+	if bounced_back:
+		bounce_counter += 1
+		retarget_cooldown_turns = maxi(retarget_cooldown_turns, 2)
+	else:
+		bounce_counter = maxi(0, bounce_counter - 1)
+	if not target_key.is_empty() and target_key != last_move_target_key:
+		previous_target_key = last_move_target_key
 	last_move_origin = from_coord
 	last_move_destination = to_coord
 	last_move_target_key = target_key
 	last_move_type = move_type
+	stuck_counter = 0
+	remember_position_sample(to_coord)
 	clear_blocked_target()
 
 func remember_blocked_target(target_key: String) -> void:
@@ -503,6 +614,21 @@ func get_blocked_target_penalty(target_key: String) -> int:
 		return 0
 	return 240 + ((blocked_target_turns - 2) * 60)
 
+func get_recent_target_penalty(target_key: String) -> int:
+	if target_key.is_empty():
+		return 0
+	var penalty: int = 0
+	if retarget_cooldown_turns > 0 and target_key == last_move_target_key:
+		penalty += 320
+	if previous_target_key == target_key:
+		penalty += 90
+	if bounce_counter >= 2 and target_key == last_move_target_key:
+		penalty += 180
+	return penalty
+
+func has_navigation_loop_pressure() -> bool:
+	return bounce_counter >= 2 or blocked_target_turns >= 2
+
 func get_bounce_forbidden_coord(target_key: String) -> Vector2i:
 	if target_key.is_empty():
 		return Vector2i(-1, -1)
@@ -510,6 +636,8 @@ func get_bounce_forbidden_coord(target_key: String) -> Vector2i:
 		return Vector2i(-1, -1)
 	if coord != last_move_destination:
 		return Vector2i(-1, -1)
+	if bounce_counter >= 2 and previous_position != Vector2i(-1, -1):
+		return previous_position
 	if last_move_type != "sidestep" and last_move_type != "fallback":
 		return Vector2i(-1, -1)
 	return last_move_origin
@@ -564,8 +692,12 @@ func clear_status_effects() -> void:
 	received_physical_damage_turns = 0
 	current_physical_shield = 0
 	physical_shield_turns = 0
+	current_magic_shield = 0
+	magic_shield_turns = 0
 	melee_reflect_damage = 0
 	reflect_turns = 0
+	melee_attacker_action_multiplier = 1.0
+	melee_attacker_action_turns = 0
 	guaranteed_magic_crit_hits = 0
 	death_mana_ratio_to_master = 0.0
 	blocked_basic_attack_count = 0
@@ -576,6 +708,8 @@ func clear_status_effects() -> void:
 	cleave_attacks_remaining = 0
 	forced_target_instance_id = -1
 	forced_target_turns = 0
+	charm_source_instance_id = -1
+	charm_turns = 0
 
 func mark_as_summoned_token(p_source_unit_id: String) -> void:
 	is_summoned_token = true
@@ -621,6 +755,14 @@ func apply_physical_shield(amount: int, turns: int, reflect_damage_amount: int =
 	melee_reflect_damage = maxi(melee_reflect_damage, reflect_damage_amount)
 	reflect_turns = maxi(reflect_turns, turns)
 
+func apply_magic_shield(amount: int, turns: int) -> void:
+	current_magic_shield = maxi(current_magic_shield, amount)
+	magic_shield_turns = maxi(magic_shield_turns, turns)
+
+func apply_melee_attacker_action_multiplier(multiplier: float, turns: int) -> void:
+	melee_attacker_action_multiplier = minf(melee_attacker_action_multiplier, multiplier)
+	melee_attacker_action_turns = maxi(melee_attacker_action_turns, turns)
+
 func apply_magic_crit_gift(hit_count: int) -> void:
 	guaranteed_magic_crit_hits = maxi(guaranteed_magic_crit_hits, hit_count)
 
@@ -665,6 +807,13 @@ func apply_forced_target(target: BattleUnitState, turns: int) -> void:
 	forced_target_instance_id = target.get_instance_id()
 	forced_target_turns = maxi(forced_target_turns, turns)
 
+func apply_charm(source: BattleUnitState, turns: int) -> void:
+	if source == null:
+		return
+	charm_source_instance_id = source.get_instance_id()
+	charm_turns = maxi(charm_turns, turns)
+	apply_action_charge_multiplier(0.5, turns)
+
 func has_forced_target() -> bool:
 	return forced_target_turns > 0 and forced_target_instance_id != -1
 
@@ -674,6 +823,16 @@ func is_forced_target(target: BattleUnitState) -> bool:
 func clear_forced_target() -> void:
 	forced_target_instance_id = -1
 	forced_target_turns = 0
+
+func is_charmed() -> bool:
+	return charm_turns > 0 and charm_source_instance_id != -1
+
+func is_charmed_by(target: BattleUnitState) -> bool:
+	return target != null and is_charmed() and target.get_instance_id() == charm_source_instance_id
+
+func clear_charm() -> void:
+	charm_source_instance_id = -1
+	charm_turns = 0
 
 func has_magic_crit_gift() -> bool:
 	return guaranteed_magic_crit_hits > 0
@@ -713,10 +872,73 @@ func absorb_physical_damage(amount: int) -> Dictionary:
 		"absorbed": absorbed,
 	}
 
+func absorb_magic_damage(amount: int) -> Dictionary:
+	if amount <= 0 or current_magic_shield <= 0:
+		return {"remaining": maxi(0, amount), "absorbed": 0}
+
+	var absorbed: int = mini(current_magic_shield, amount)
+	current_magic_shield -= absorbed
+	return {
+		"remaining": maxi(0, amount - absorbed),
+		"absorbed": absorbed,
+	}
+
 func get_melee_reflect_damage() -> int:
 	if reflect_turns <= 0:
 		return 0
 	return melee_reflect_damage
+
+func get_melee_attacker_action_multiplier() -> float:
+	if melee_attacker_action_turns <= 0:
+		return 1.0
+	return melee_attacker_action_multiplier
+
+func clear_negative_effects() -> void:
+	physical_defense_multiplier_status = 1.0
+	physical_defense_debuff_turns = 0
+	magic_defense_multiplier_status = 1.0
+	magic_defense_debuff_turns = 0
+	if mana_gain_multiplier_status < 1.0:
+		mana_gain_multiplier_status = 1.0
+		mana_gain_modifier_turns = 0
+	if action_charge_multiplier_status < 1.0:
+		action_charge_multiplier_status = 1.0
+		action_charge_modifier_turns = 0
+	skip_turns_remaining = 0
+	physical_miss_chance_status = 0.0
+	physical_miss_turns = 0
+	received_physical_damage_multiplier_status = 1.0
+	received_physical_damage_turns = 0
+	clear_forced_target()
+	clear_charm()
+
+func clear_positive_effects() -> void:
+	bonus_physical_attack = 0
+	bonus_magic_attack = 0
+	bonus_physical_defense = 0
+	bonus_magic_defense = 0
+	if mana_gain_multiplier_status > 1.0:
+		mana_gain_multiplier_status = 1.0
+		mana_gain_modifier_turns = 0
+	if action_charge_multiplier_status > 1.0:
+		action_charge_multiplier_status = 1.0
+		action_charge_modifier_turns = 0
+	stealth_turns_remaining = 0
+	current_physical_shield = 0
+	physical_shield_turns = 0
+	current_magic_shield = 0
+	magic_shield_turns = 0
+	melee_reflect_damage = 0
+	reflect_turns = 0
+	melee_attacker_action_multiplier = 1.0
+	melee_attacker_action_turns = 0
+	guaranteed_magic_crit_hits = 0
+	blocked_basic_attack_count = 0
+	lifesteal_ratio_status = 0.0
+	lifesteal_turns = 0
+	attack_range_bonus_status = 0
+	attack_range_bonus_turns = 0
+	cleave_attacks_remaining = 0
 
 func advance_turn_effects() -> void:
 	if physical_defense_debuff_turns > 0:
@@ -754,10 +976,20 @@ func advance_turn_effects() -> void:
 		if physical_shield_turns <= 0:
 			current_physical_shield = 0
 
+	if magic_shield_turns > 0:
+		magic_shield_turns -= 1
+		if magic_shield_turns <= 0:
+			current_magic_shield = 0
+
 	if reflect_turns > 0:
 		reflect_turns -= 1
 		if reflect_turns <= 0:
 			melee_reflect_damage = 0
+
+	if melee_attacker_action_turns > 0:
+		melee_attacker_action_turns -= 1
+		if melee_attacker_action_turns <= 0:
+			melee_attacker_action_multiplier = 1.0
 
 	if lifesteal_turns > 0:
 		lifesteal_turns -= 1
@@ -774,8 +1006,19 @@ func advance_turn_effects() -> void:
 		if forced_target_turns <= 0:
 			clear_forced_target()
 
+	if charm_turns > 0:
+		charm_turns -= 1
+		if charm_turns <= 0:
+			clear_charm()
+
+	if target_lock_timer > 0:
+		target_lock_timer -= 1
+
 	if stealth_turns_remaining > 0:
 		stealth_turns_remaining -= 1
+
+	if retarget_cooldown_turns > 0:
+		retarget_cooldown_turns -= 1
 
 func apply_race_synergy(
 	race_count: int,

@@ -13,4 +13,4 @@ range = 1
 summon_count = 2
 summon_unit_path = "res://data/units/necromancer/necromancer_skeleton.tres"
 summon_stat_ratio = 0.15
-description = "Ao encher a mana, invoca 2 esqueletos em celulas livres proximas. Cada esqueleto entra com 15% dos status de Mordos."
+description = "Ao encher a mana, invoca 2 esqueletos em celulas livres proximas. Eles entram com 15% dos status de Mordos e recebem +3% adicionais por alma coletada."

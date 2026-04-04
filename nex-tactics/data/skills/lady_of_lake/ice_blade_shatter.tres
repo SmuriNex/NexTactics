@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "ice_blade_shatter"
+display_name = "Estilhacar"
+effect_type = 28
+mana_cost = 60
+cooldown = 0.0
+range = 1
+damage_amount = 2
+physical_power_multiplier = 1.35
+description = "Golpe furtivo. Se o alvo estiver sob Lentidao, o critico e garantido."

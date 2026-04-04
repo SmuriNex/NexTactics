@@ -4,8 +4,10 @@ class_name BattleHUD
 signal player_sidebar_entry_pressed(player_id: String)
 signal return_to_local_board_pressed
 signal card_shop_option_selected(card_path: String)
+signal elimination_watch_requested
+signal elimination_back_requested
+signal play_again_requested
 
-const OBSERVED_BOARD_EMPTY_CELL := "Â·"
 
 @onready var round_label: Label = $PanelContainer/MarginContainer/VBoxContainer/RoundLabel
 @onready var player_life_label: Label = $PanelContainer/MarginContainer/VBoxContainer/PlayerLifeLabel
@@ -13,6 +15,9 @@ const OBSERVED_BOARD_EMPTY_CELL := "Â·"
 @onready var state_label: Label = $PanelContainer/MarginContainer/VBoxContainer/StateLabel
 @onready var opponent_label: Label = $PanelContainer/MarginContainer/VBoxContainer/OpponentLabel
 @onready var status_panel_container: PanelContainer = $PanelContainer
+@onready var observer_banner_panel_container: PanelContainer = $ObserverBannerPanelContainer
+@onready var observer_banner_label: Label = $ObserverBannerPanelContainer/MarginContainer/HBoxContainer/ObserverBannerLabel
+@onready var observer_return_button: Button = $ObserverBannerPanelContainer/MarginContainer/HBoxContainer/ObserverReturnButton
 @onready var info_panel_container: PanelContainer = $InfoPanelContainer
 @onready var unit_info_title_label: Label = $InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/HeaderPanel/MarginContainer/VBoxContainer/HeaderRow/UnitInfoTitleLabel
 @onready var unit_info_cost_label: Label = $InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/HeaderPanel/MarginContainer/VBoxContainer/HeaderRow/UnitInfoCostLabel
@@ -25,11 +30,6 @@ const OBSERVED_BOARD_EMPTY_CELL := "Â·"
 @onready var skill_block_label: Label = $InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/SkillSectionPanel/MarginContainer/VBoxContainer/SkillBlockLabel
 @onready var tags_section_title_label: Label = $InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/TagsSectionPanel/MarginContainer/VBoxContainer/TagsSectionTitleLabel
 @onready var tags_block_label: Label = $InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/TagsSectionPanel/MarginContainer/VBoxContainer/TagsBlockLabel
-@onready var observed_board_section_panel: PanelContainer = $InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/ObservedBoardSectionPanel
-@onready var observed_board_meta_label: Label = $InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/ObservedBoardSectionPanel/MarginContainer/VBoxContainer/ObservedBoardMetaLabel
-@onready var observed_board_grid: GridContainer = $InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/ObservedBoardSectionPanel/MarginContainer/VBoxContainer/ObservedBoardGrid
-@onready var observed_board_hint_label: Label = $InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/ObservedBoardSectionPanel/MarginContainer/VBoxContainer/ObservedBoardHintLabel
-@onready var observed_board_back_button: Button = $InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/ObservedBoardSectionPanel/MarginContainer/VBoxContainer/ObservedBoardBackButton
 @onready var player_sidebar_panel_container: PanelContainer = $PlayerSidebarPanelContainer
 @onready var player_sidebar_list: VBoxContainer = $PlayerSidebarPanelContainer/MarginContainer/VBoxContainer/PlayersListVBox
 @onready var card_shop_overlay: Control = $CardShopOverlay
@@ -38,31 +38,47 @@ const OBSERVED_BOARD_EMPTY_CELL := "Â·"
 @onready var card_shop_button_a: Button = $CardShopOverlay/CenterContainer/ShopPanel/MarginContainer/VBoxContainer/CardShopOptionsRow/CardShopOptionButtonA
 @onready var card_shop_button_b: Button = $CardShopOverlay/CenterContainer/ShopPanel/MarginContainer/VBoxContainer/CardShopOptionsRow/CardShopOptionButtonB
 
-var observed_board_cells: Array[Button] = []
 var card_shop_option_paths: Array[String] = []
+var elimination_overlay: Control = null
+var elimination_placement_label: Label = null
+var elimination_watch_button: Button = null
+var elimination_back_button: Button = null
+var final_overlay: Control = null
+var final_placement_label: Label = null
+var final_ranking_label: Label = null
+var final_winner_label: Label = null
+var final_stats_label: Label = null
+var final_play_again_button: Button = null
 
 func _ready() -> void:
-	_build_observed_board_cells()
-	if observed_board_back_button != null:
-		observed_board_back_button.pressed.connect(_on_observed_board_back_button_pressed)
+	_ensure_phase8_overlays()
+	if observer_return_button != null:
+		observer_return_button.pressed.connect(_on_observer_return_button_pressed)
 	if card_shop_button_a != null:
 		card_shop_button_a.pressed.connect(_on_card_shop_option_button_pressed.bind(0))
 	if card_shop_button_b != null:
 		card_shop_button_b.pressed.connect(_on_card_shop_option_button_pressed.bind(1))
 	clear_unit_info()
+	clear_observer_banner()
 	update_player_sidebar([])
 	hide_card_shop()
+	hide_elimination_screen()
+	hide_final_screen()
 
 func update_status(
 	round_number: int,
 	player_life: int,
 	gold_value: int,
+	last_income_total: int,
 	state_name: String,
 	opponent_name: String
 ) -> void:
 	round_label.text = "RODADA %d" % round_number
 	player_life_label.text = "Vida jog.    %d" % player_life
-	gold_label.text = "Ouro         %d" % gold_value
+	if last_income_total > 0:
+		gold_label.text = "Ouro         %d (+%d)" % [gold_value, last_income_total]
+	else:
+		gold_label.text = "Ouro         %d" % gold_value
 	state_label.text = "Estado       %s" % state_name
 	opponent_label.text = "Oponente     %s" % opponent_name
 
@@ -72,12 +88,11 @@ func update_unit_info(unit_state: BattleUnitState) -> void:
 		return
 	info_panel_container.visible = true
 	_set_default_section_titles()
-	_set_observed_board_visible(false)
 
 	var title_text: String = unit_state.get_display_name()
 	if unit_state.is_master:
 		title_text += " [MESTRE]"
-	var cost_text: String = "Custo %d" % unit_state.unit_data.cost
+	var cost_text: String = "Custo %d" % unit_state.unit_data.get_effective_cost()
 	var subtitle_text: String = "%s | %s | %s" % [
 		_team_name(unit_state.team_side),
 		unit_state.get_race_name(),
@@ -100,7 +115,6 @@ func update_card_info(card_data: CardData) -> void:
 		return
 	info_panel_container.visible = true
 	_set_default_section_titles()
-	_set_observed_board_visible(false)
 
 	var primary_lines: Array[String] = [
 		"Tipo: %s" % _support_card_type_name(card_data),
@@ -127,37 +141,35 @@ func update_card_info(card_data: CardData) -> void:
 
 func update_observed_board(snapshot: Dictionary) -> void:
 	if snapshot.is_empty():
-		clear_unit_info()
+		clear_observer_banner()
 		return
 
-	info_panel_container.visible = true
-	_set_observed_board_section_titles()
-	_set_observed_board_visible(true)
-	if observed_board_grid != null:
-		observed_board_grid.visible = false
-	_set_info_blocks(
-		"Observando: %s" % str(snapshot.get("player_name", "Jogador")),
-		"%d PV" % int(snapshot.get("life", 0)),
-		"Rodada %d | %s" % [
-			int(snapshot.get("round_number", 0)),
-			str(snapshot.get("phase", "PREPARACAO")),
-		],
-		_join_strings(_build_observed_primary_lines(snapshot), "\n"),
-		_join_strings(_build_observed_stats_lines(snapshot), "\n"),
-		_join_strings(_build_observed_result_lines(snapshot), "\n"),
-		_join_strings(_build_observed_unit_lines(snapshot), "\n")
-	)
-	observed_board_meta_label.text = "Mesa viva observada: %s | Vida %d | Fase %s" % [
-		str(snapshot.get("player_name", "Jogador")),
-		int(snapshot.get("life", 0)),
-		str(snapshot.get("phase", "PREPARACAO")),
-	]
-	observed_board_hint_label.text = "O tabuleiro principal mostra a mesa observada em tempo real. Clique em outro jogador para trocar ou use \"Voltar para meu tabuleiro\"."
+	var player_name: String = str(snapshot.get("player_name", "Jogador"))
+	var opponent_name: String = str(snapshot.get("opponent_name", ""))
+	if opponent_name.is_empty():
+		set_observer_banner("OBSERVANDO: %s" % player_name)
+		return
+	set_observer_banner("OBSERVANDO: %s vs %s" % [player_name, opponent_name])
+
+func set_observer_banner(text: String) -> void:
+	if observer_banner_panel_container == null or observer_banner_label == null:
+		return
+	var resolved_text: String = text.strip_edges()
+	if resolved_text.is_empty():
+		clear_observer_banner()
+		return
+	observer_banner_label.text = resolved_text
+	observer_banner_panel_container.visible = true
+
+func clear_observer_banner() -> void:
+	if observer_banner_panel_container == null or observer_banner_label == null:
+		return
+	observer_banner_label.text = "OBSERVANDO: -"
+	observer_banner_panel_container.visible = false
 
 func clear_unit_info() -> void:
 	info_panel_container.visible = false
 	_set_default_section_titles()
-	_set_observed_board_visible(false)
 	unit_info_title_label.text = "Info da unidade"
 	unit_info_cost_label.text = "Custo -"
 	unit_info_subtitle_label.text = "Clique com o botao direito em uma unidade ou carta."
@@ -167,10 +179,17 @@ func clear_unit_info() -> void:
 	tags_block_label.text = "-"
 
 func is_over_hud(global_pos: Vector2) -> bool:
+	if elimination_overlay != null and elimination_overlay.visible:
+		return true
+	if final_overlay != null and final_overlay.visible:
+		return true
 	if card_shop_overlay != null and card_shop_overlay.visible:
 		return true
 	if status_panel_container.get_global_rect().has_point(global_pos):
 		return true
+	if observer_banner_panel_container != null and observer_banner_panel_container.visible:
+		if observer_banner_panel_container.get_global_rect().has_point(global_pos):
+			return true
 	if player_sidebar_panel_container.get_global_rect().has_point(global_pos):
 		return true
 	if info_panel_container.visible and info_panel_container.get_global_rect().has_point(global_pos):
@@ -189,7 +208,7 @@ func show_card_shop(round_number: int, option_entries: Array[Dictionary]) -> voi
 	card_shop_overlay.visible = true
 	card_shop_option_paths.clear()
 	card_shop_title_label.text = "LOJA DA PARTIDA - RODADA %d" % round_number
-	card_shop_subtitle_label.text = "Escolha 1 carta gratuita. Ela permanece com voce ate o fim da partida."
+	card_shop_subtitle_label.text = "Escolha 1 carta gratuita. O PREP fica pausado ate voce decidir."
 	_set_card_shop_button(card_shop_button_a, option_entries, 0)
 	_set_card_shop_button(card_shop_button_b, option_entries, 1)
 
@@ -198,6 +217,157 @@ func hide_card_shop() -> void:
 		return
 	card_shop_overlay.visible = false
 	card_shop_option_paths.clear()
+
+func is_elimination_screen_open() -> bool:
+	return elimination_overlay != null and elimination_overlay.visible
+
+func is_final_screen_open() -> bool:
+	return final_overlay != null and final_overlay.visible
+
+func show_elimination_screen(placement_text: String) -> void:
+	_ensure_phase8_overlays()
+	hide_final_screen()
+	if elimination_placement_label != null:
+		elimination_placement_label.text = "Sua colocacao: %s" % placement_text
+	if elimination_overlay != null:
+		elimination_overlay.visible = true
+
+func hide_elimination_screen() -> void:
+	if elimination_overlay != null:
+		elimination_overlay.visible = false
+
+func show_final_screen(
+	placement_text: String,
+	ranking_lines: Array[String],
+	winner_unit_lines: Array[String],
+	total_damage: int,
+	winner_name: String
+) -> void:
+	_ensure_phase8_overlays()
+	hide_elimination_screen()
+	if final_placement_label != null:
+		final_placement_label.text = "Sua colocacao: %s" % placement_text
+	if final_ranking_label != null:
+		var ranking_text: String = _join_strings(ranking_lines, "\n")
+		if ranking_text.is_empty():
+			ranking_text = "Ranking indisponivel."
+		final_ranking_label.text = "Ranking completo:\n%s" % ranking_text
+	if final_winner_label != null:
+		var winner_text: String = _join_strings(winner_unit_lines, "\n")
+		if winner_text.is_empty():
+			winner_text = "Composicao final indisponivel."
+		final_winner_label.text = "Pecas finais do vencedor (%s):\n%s" % [winner_name, winner_text]
+	if final_stats_label != null:
+		final_stats_label.text = "Dano total causado na partida: %d" % total_damage
+	if final_overlay != null:
+		final_overlay.visible = true
+
+func hide_final_screen() -> void:
+	if final_overlay != null:
+		final_overlay.visible = false
+
+func _ensure_phase8_overlays() -> void:
+	if elimination_overlay != null and final_overlay != null:
+		return
+
+	elimination_overlay = _build_fullscreen_overlay("EliminationOverlay")
+	var elimination_vbox: VBoxContainer = _build_overlay_panel(elimination_overlay, Vector2(560.0, 250.0))
+	elimination_vbox.add_child(_build_overlay_label("VOCE FOI ELIMINADO", 24, HORIZONTAL_ALIGNMENT_CENTER, true))
+	elimination_placement_label = _build_overlay_label("Sua colocacao: Top -", 17, HORIZONTAL_ALIGNMENT_CENTER, true)
+	elimination_vbox.add_child(elimination_placement_label)
+	elimination_vbox.add_child(_build_overlay_label("Voce pode continuar assistindo em observer ou voltar para a tela inicial.", 12, HORIZONTAL_ALIGNMENT_CENTER, true))
+	var elimination_buttons := HBoxContainer.new()
+	elimination_buttons.alignment = BoxContainer.ALIGNMENT_CENTER
+	elimination_buttons.add_theme_constant_override("separation", 10)
+	elimination_vbox.add_child(elimination_buttons)
+	elimination_watch_button = Button.new()
+	elimination_watch_button.text = "Assistir ate o fim"
+	elimination_watch_button.focus_mode = Control.FOCUS_NONE
+	elimination_watch_button.pressed.connect(_on_elimination_watch_button_pressed)
+	elimination_buttons.add_child(elimination_watch_button)
+	elimination_back_button = Button.new()
+	elimination_back_button.text = "Voltar ao inicio"
+	elimination_back_button.focus_mode = Control.FOCUS_NONE
+	elimination_back_button.pressed.connect(_on_elimination_back_button_pressed)
+	elimination_buttons.add_child(elimination_back_button)
+	add_child(elimination_overlay)
+
+	final_overlay = _build_fullscreen_overlay("FinalOverlay")
+	var final_vbox: VBoxContainer = _build_overlay_panel(final_overlay, Vector2(820.0, 520.0))
+	final_vbox.add_child(_build_overlay_label("FIM DA PARTIDA", 24, HORIZONTAL_ALIGNMENT_CENTER, true))
+	final_placement_label = _build_overlay_label("Sua colocacao: Top -", 17, HORIZONTAL_ALIGNMENT_CENTER, true)
+	final_vbox.add_child(final_placement_label)
+	final_ranking_label = _build_overlay_label("Ranking completo:", 12, HORIZONTAL_ALIGNMENT_LEFT, true)
+	final_ranking_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	final_vbox.add_child(final_ranking_label)
+	final_winner_label = _build_overlay_label("Pecas finais do vencedor:", 12, HORIZONTAL_ALIGNMENT_LEFT, true)
+	final_winner_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	final_vbox.add_child(final_winner_label)
+	final_stats_label = _build_overlay_label("Dano total causado na partida: 0", 12, HORIZONTAL_ALIGNMENT_LEFT, true)
+	final_vbox.add_child(final_stats_label)
+	final_play_again_button = Button.new()
+	final_play_again_button.text = "Jogar novamente"
+	final_play_again_button.focus_mode = Control.FOCUS_NONE
+	final_play_again_button.custom_minimum_size = Vector2(0.0, 38.0)
+	final_play_again_button.pressed.connect(_on_final_play_again_button_pressed)
+	final_vbox.add_child(final_play_again_button)
+	add_child(final_overlay)
+
+func _build_fullscreen_overlay(node_name: String) -> Control:
+	var overlay := Control.new()
+	overlay.name = node_name
+	overlay.anchor_right = 1.0
+	overlay.anchor_bottom = 1.0
+	overlay.offset_right = 0.0
+	overlay.offset_bottom = 0.0
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.visible = false
+
+	var dimmer := ColorRect.new()
+	dimmer.anchor_right = 1.0
+	dimmer.anchor_bottom = 1.0
+	dimmer.offset_right = 0.0
+	dimmer.offset_bottom = 0.0
+	dimmer.mouse_filter = Control.MOUSE_FILTER_STOP
+	dimmer.color = Color(0.0, 0.0, 0.0, 0.72)
+	overlay.add_child(dimmer)
+	return overlay
+
+func _build_overlay_panel(overlay: Control, minimum_size: Vector2) -> VBoxContainer:
+	var center := CenterContainer.new()
+	center.anchor_right = 1.0
+	center.anchor_bottom = 1.0
+	center.offset_right = 0.0
+	center.offset_bottom = 0.0
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.add_child(center)
+
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = minimum_size
+	center.add_child(panel)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 18)
+	margin.add_theme_constant_override("margin_top", 16)
+	margin.add_theme_constant_override("margin_right", 18)
+	margin.add_theme_constant_override("margin_bottom", 16)
+	panel.add_child(margin)
+
+	var vbox := VBoxContainer.new()
+	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	vbox.add_theme_constant_override("separation", 10)
+	margin.add_child(vbox)
+	return vbox
+
+func _build_overlay_label(text_value: String, font_size: int, alignment: HorizontalAlignment, wrap_text: bool) -> Label:
+	var label := Label.new()
+	label.text = text_value
+	label.horizontal_alignment = alignment
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART if wrap_text else TextServer.AUTOWRAP_OFF
+	label.add_theme_font_size_override("font_size", font_size)
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	return label
 
 func update_player_sidebar(entries: Array[Dictionary]) -> void:
 	if player_sidebar_list == null:
@@ -249,120 +419,11 @@ func _set_card_shop_button(button: Button, option_entries: Array[Dictionary], in
 
 	button.text = _format_card_shop_option_text(card_data)
 
-func _build_observed_board_cells() -> void:
-	if observed_board_grid == null:
-		return
-	for child in observed_board_grid.get_children():
-		observed_board_grid.remove_child(child)
-		child.queue_free()
-	observed_board_cells.clear()
-
-	for _index in range(BattleConfig.BOARD_WIDTH * BattleConfig.BOARD_HEIGHT):
-		var cell_button := Button.new()
-		cell_button.disabled = true
-		cell_button.focus_mode = Control.FOCUS_NONE
-		cell_button.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		cell_button.custom_minimum_size = Vector2(30.0, 24.0)
-		cell_button.text = "."
-		cell_button.flat = true
-		cell_button.add_theme_font_size_override("font_size", 10)
-		observed_board_grid.add_child(cell_button)
-		observed_board_cells.append(cell_button)
-
 func _set_default_section_titles() -> void:
 	primary_section_title_label.text = "VIDA E MANA"
 	stats_section_title_label.text = "ATRIBUTOS"
 	skill_section_title_label.text = "PASSIVAS E HABILIDADE"
 	tags_section_title_label.text = "PERFIL E TAGS"
-
-func _set_observed_board_section_titles() -> void:
-	primary_section_title_label.text = "MESA OBSERVADA"
-	stats_section_title_label.text = "FORMACAO"
-	skill_section_title_label.text = "STATUS DA RODADA"
-	tags_section_title_label.text = "AJUDA"
-
-func _set_observed_board_visible(value: bool) -> void:
-	if observed_board_section_panel == null:
-		return
-	observed_board_section_panel.visible = value
-	if observed_board_grid != null:
-		observed_board_grid.visible = value
-
-func _refresh_observed_board_grid(snapshot: Dictionary) -> void:
-	for cell_button in observed_board_cells:
-		cell_button.text = "."
-		cell_button.tooltip_text = ""
-		cell_button.add_theme_color_override("font_color", Color(0.78, 0.78, 0.80, 1.0))
-
-	var snapshot_units: Array = snapshot.get("units", [])
-	for unit_variant in snapshot_units:
-		var unit_entry: Dictionary = unit_variant
-		var coord: Vector2i = unit_entry.get("coord", Vector2i(-1, -1))
-		var cell_index: int = coord.y * BattleConfig.BOARD_WIDTH + coord.x
-		if cell_index < 0 or cell_index >= observed_board_cells.size():
-			continue
-		var cell_button: Button = observed_board_cells[cell_index]
-		cell_button.text = _abbreviate_unit_name(str(unit_entry.get("display_name", "Unidade")))
-		cell_button.tooltip_text = "%s | %s | %s" % [
-			str(unit_entry.get("display_name", "Unidade")),
-			str(unit_entry.get("race_name", "Raca")),
-			str(unit_entry.get("class_label", "Classe")),
-		]
-		cell_button.add_theme_color_override("font_color", _observed_board_cell_color(unit_entry))
-
-	observed_board_meta_label.text = "Legenda: o preview mostra o estado salvo do board na rodada atual."
-	observed_board_hint_label.text = "Clique em outro jogador para trocar a observacao. Clique em \"Voltar para meu tabuleiro\" para fechar o preview."
-
-func _build_observed_primary_lines(snapshot: Dictionary) -> Array[String]:
-	var lines: Array[String] = [
-		"Vida atual: %d PV" % int(snapshot.get("life", 0)),
-		"Fase salva: %s" % str(snapshot.get("phase", "PREPARACAO")),
-		"Oponente da mesa: %s" % str(snapshot.get("opponent_name", "Sem oponente")),
-		"Ouro da rodada: %d (orcamento %d)" % [
-			int(snapshot.get("gold", 0)),
-			int(snapshot.get("gold_budget", 0)),
-		],
-	]
-	var table_id: String = str(snapshot.get("table_id", ""))
-	if not table_id.is_empty():
-		lines.append("Mesa: %s" % table_id)
-	return lines
-
-func _build_observed_stats_lines(snapshot: Dictionary) -> Array[String]:
-	return [
-		"Mestre: %s" % str(snapshot.get("master_name", "Sem mestre")),
-		"Pecas em campo: %d" % int(snapshot.get("unit_count", 0)),
-		"Unidades alem do mestre: %d" % int(snapshot.get("non_master_count", 0)),
-		"Cartas da partida: %d" % int(snapshot.get("owned_card_count", 0)),
-		"Nivel do lobby: %d | Streak: %d" % [
-			int(snapshot.get("player_level", 1)),
-			int(snapshot.get("streak", 0)),
-		],
-	]
-
-func _build_observed_result_lines(snapshot: Dictionary) -> Array[String]:
-	var lines: Array[String] = []
-	var result_text: String = str(snapshot.get("result_text", ""))
-	if result_text.is_empty():
-		lines.append("Resultado: rodada ainda em andamento.")
-	else:
-		lines.append("Resultado: %s" % result_text)
-	var card_summary: String = str(snapshot.get("card_summary", ""))
-	if not card_summary.is_empty():
-		lines.append("Cartas auto-usadas: %s" % card_summary)
-	var recent_events: Array = snapshot.get("recent_events", [])
-	if not recent_events.is_empty():
-		var latest_event: Dictionary = recent_events[recent_events.size() - 1]
-		var latest_actor: String = str(latest_event.get("actor", "Mesa"))
-		var latest_type: String = str(latest_event.get("type", "evento"))
-		lines.append("Evento recente: %s (%s)" % [latest_actor, latest_type])
-	return lines
-
-func _build_observed_unit_lines(snapshot: Dictionary) -> Array[String]:
-	return [
-		"Clique com o botao direito em uma peca do board para abrir a ficha dela.",
-		"Use a sidebar para trocar de mesa ou voltar para o seu tabuleiro.",
-	]
 
 func _set_info_blocks(
 	title_text: String,
@@ -474,12 +535,17 @@ func _piece_passive_info(unit_state: BattleUnitState) -> Dictionary:
 		"necromancer_master":
 			return {
 				"name": "Colheita de Almas",
-				"description": "Quando uma unidade morre, Mordos absorve mana. Mortes inimigas rendem +10 mana e mortes aliadas rendem +12 mana.",
+				"description": "Sempre que qualquer unidade morre, Mordos acumula almas. Seus esqueletos invocados escalam com o total de almas da luta.",
 			}
 		"thrax_master":
 			return {
-				"name": "Presenca do Rei",
-				"description": "Aliados nas casas adjacentes a Thrax recebem +30% de ataque fisico. Ao encher a mana, ele provoca inimigos proximos para focarem nele.",
+				"name": "Ganancia do Rei",
+				"description": "Todo o exercito de Thrax recebe ataque fisico extra com base no ouro real guardado pelo jogador.",
+			}
+		"lady_of_lake_master":
+			return {
+				"name": "Aguas da Vida",
+				"description": "Enquanto viver, a Dama do Lago cura passivamente o aliado ferido com menor vida e troca de alvo quando ele se estabiliza.",
 			}
 		_:
 			return {
@@ -588,6 +654,32 @@ func _active_skill_info(unit_state: BattleUnitState) -> Dictionary:
 			info.target_text = "Afeta aliados adjacentes."
 		GameEnums.SkillEffectType.MASTER_TAUNT_AURA:
 			info.target_text = "Provoca inimigos proximos para focarem o Mestre."
+		GameEnums.SkillEffectType.TARGET_MAGIC_BURST_SLOW:
+			info.target_text = "Prioriza o inimigo mais forte e reduz muito o ritmo dele."
+		GameEnums.SkillEffectType.SLOWED_CRIT_STRIKE:
+			info.target_text = "Prioriza inimigos sob Lentidao para garantir critico."
+		GameEnums.SkillEffectType.TARGET_MAGIC_DOT_CONTROL:
+			info.target_text = "Prioriza o inimigo mais forte para interromper seu ritmo."
+		GameEnums.SkillEffectType.SELF_ATTACK_BLOCK_RETALIATE_SLOW:
+			info.target_text = "Sem alvo manual. Reforca a propria linha de frente."
+		GameEnums.SkillEffectType.ADJACENT_KNOCKBACK:
+			info.target_text = "Afeta inimigos adjacentes e pode empurra-los."
+		GameEnums.SkillEffectType.LINE_PHYSICAL_DEFENSE_BREAK:
+			info.target_text = "Perfura uma linha inimiga e reduz a defesa fisica dos atingidos."
+		GameEnums.SkillEffectType.AOE_PHYSICAL_EVASION:
+			info.target_text = "Gira sobre o alvo atual e ganha esquiva contra ataques basicos."
+		GameEnums.SkillEffectType.TARGET_MAGIC_STUN:
+			info.target_text = "Usa o alvo atual e o atordoa por um curto periodo."
+		GameEnums.SkillEffectType.CONE_MAGIC_DISPEL:
+			info.target_text = "Atinge um cone frontal curto e pode remover buffs positivos."
+		GameEnums.SkillEffectType.TARGET_CHARM:
+			info.target_text = "Encanta o inimigo mais proximo e o atrai ate a sereia."
+		GameEnums.SkillEffectType.ADJACENT_MAGIC_SHIELD:
+			info.target_text = "Protege um aliado proximo com escudo contra dano magico."
+		GameEnums.SkillEffectType.ADJACENT_CLEANSE:
+			info.target_text = "Purifica aliados adjacentes com debuffs."
+		GameEnums.SkillEffectType.LINE_HASTE:
+			info.target_text = "Acelera o proprio clerigo e aliados ao lado ou atras dele."
 		_:
 			info.target_text = ""
 
@@ -635,12 +727,26 @@ func _build_support_stats_lines(card_data: CardData) -> Array[String]:
 		stats_lines.append("Atordoamento: %d turnos" % card_data.stun_turns)
 	if card_data.mana_gain_multiplier < 1.0:
 		stats_lines.append("Ganho de mana: %d%% do normal" % int(round(card_data.mana_gain_multiplier * 100.0)))
+	if card_data.mana_gain_multiplier > 1.0:
+		stats_lines.append("Ganho de mana: +%d%%" % int(round((card_data.mana_gain_multiplier - 1.0) * 100.0)))
+	if card_data.action_charge_multiplier < 1.0:
+		stats_lines.append("Ritmo inimigo: %d%%" % int(round(card_data.action_charge_multiplier * 100.0)))
+	if card_data.lifesteal_ratio > 0.0:
+		stats_lines.append("Roubo de vida: %d%%" % int(round(card_data.lifesteal_ratio * 100.0)))
 	if card_data.attack_range_bonus > 0:
 		stats_lines.append("Alcance basico: +%d" % card_data.attack_range_bonus)
+	if card_data.damage_amount > 0:
+		stats_lines.append("Dano base: %d" % card_data.damage_amount)
+	if card_data.effect_repeat_count > 0:
+		stats_lines.append("Repeticoes: %d" % card_data.effect_repeat_count)
+	if card_data.periodic_interval_turns > 0:
+		stats_lines.append("Intervalo: %d turnos" % card_data.periodic_interval_turns)
 	if card_data.bonus_next_round_gold > 0:
 		stats_lines.append("Ouro futuro: +%d" % card_data.bonus_next_round_gold)
 	if card_data.tribute_steal_amount > 0:
 		stats_lines.append("Tributo: rouba ate %d" % card_data.tribute_steal_amount)
+	if not card_data.summon_unit_path.is_empty():
+		stats_lines.append("Invocacao condicional: %.0f%% de PV" % (card_data.summon_current_hp_ratio * 100.0))
 	if stats_lines.is_empty():
 		stats_lines.append("Sem modificadores numericos extras.")
 	return stats_lines
@@ -680,7 +786,7 @@ func _player_sidebar_color(entry: Dictionary) -> Color:
 func _on_player_sidebar_button_pressed(player_id: String) -> void:
 	player_sidebar_entry_pressed.emit(player_id)
 
-func _on_observed_board_back_button_pressed() -> void:
+func _on_observer_return_button_pressed() -> void:
 	return_to_local_board_pressed.emit()
 
 func _on_card_shop_option_button_pressed(option_index: int) -> void:
@@ -691,28 +797,14 @@ func _on_card_shop_option_button_pressed(option_index: int) -> void:
 		return
 	card_shop_option_selected.emit(card_path)
 
-func _abbreviate_unit_name(display_name: String) -> String:
-	var words: PackedStringArray = display_name.strip_edges().split(" ", false)
-	if words.is_empty():
-		return "."
-	if words.size() == 1:
-		return words[0].substr(0, mini(2, words[0].length())).to_upper()
-	return (words[0].substr(0, 1) + words[1].substr(0, 1)).to_upper()
+func _on_elimination_watch_button_pressed() -> void:
+	elimination_watch_requested.emit()
 
-func _observed_board_cell_color(unit_entry: Dictionary) -> Color:
-	if bool(unit_entry.get("is_master", false)):
-		return Color(1.0, 0.90, 0.50, 1.0)
-	if int(unit_entry.get("team_side", GameEnums.TeamSide.PLAYER)) == GameEnums.TeamSide.ENEMY:
-		return Color(1.0, 0.64, 0.60, 1.0)
+func _on_elimination_back_button_pressed() -> void:
+	elimination_back_requested.emit()
 
-	var class_label: String = str(unit_entry.get("class_label", "")).to_lower()
-	if class_label.contains("tank") or class_label.contains("ogro"):
-		return Color(0.62, 0.84, 1.0, 1.0)
-	if class_label.contains("support"):
-		return Color(0.90, 0.68, 1.0, 1.0)
-	if class_label.contains("disrupt"):
-		return Color(1.0, 0.72, 0.60, 1.0)
-	return Color(0.95, 0.95, 0.95, 1.0)
+func _on_final_play_again_button_pressed() -> void:
+	play_again_requested.emit()
 
 func _build_tags(unit_state: BattleUnitState) -> Array[String]:
 	var tags: Array[String] = []
@@ -769,6 +861,16 @@ func _support_card_type_name(card_data: CardData) -> String:
 			return "Equipamento ofensivo"
 		GameEnums.SupportCardEffectType.OPENING_REPOSITION:
 			return "Armadilha de abertura"
+		GameEnums.SupportCardEffectType.OPENING_ACTION_SLOW_FIELD:
+			return "Feitico de campo"
+		GameEnums.SupportCardEffectType.PERIODIC_RANDOM_MAGIC_FIELD:
+			return "Feitico de campo"
+		GameEnums.SupportCardEffectType.CONDITIONAL_SUMMON_ON_FIRST_ALLY_DEATH:
+			return "Invocacao condicional"
+		GameEnums.SupportCardEffectType.UNIT_MANA_REGEN_BUFF:
+			return "Equipamento mistico"
+		GameEnums.SupportCardEffectType.UNIT_LIFESTEAL_GIFT:
+			return "Equipamento ofensivo"
 		_:
 			return "Suporte"
 
@@ -798,6 +900,16 @@ func _support_target_name(effect_type: int) -> String:
 			return "Unidade aliada"
 		GameEnums.SupportCardEffectType.OPENING_REPOSITION:
 			return "Sem alvo"
+		GameEnums.SupportCardEffectType.OPENING_ACTION_SLOW_FIELD:
+			return "Sem alvo"
+		GameEnums.SupportCardEffectType.PERIODIC_RANDOM_MAGIC_FIELD:
+			return "Sem alvo"
+		GameEnums.SupportCardEffectType.CONDITIONAL_SUMMON_ON_FIRST_ALLY_DEATH:
+			return "Sem alvo"
+		GameEnums.SupportCardEffectType.UNIT_MANA_REGEN_BUFF:
+			return "Unidade aliada"
+		GameEnums.SupportCardEffectType.UNIT_LIFESTEAL_GIFT:
+			return "Unidade aliada"
 		_:
 			return "Desconhecido"
 
@@ -819,8 +931,12 @@ func _build_status_text(unit_state: BattleUnitState) -> String:
 		statuses.append("Furtividade")
 	if unit_state.current_physical_shield > 0:
 		statuses.append("Escudo %d" % unit_state.current_physical_shield)
+	if unit_state.current_magic_shield > 0:
+		statuses.append("Escudo magico %d" % unit_state.current_magic_shield)
 	if unit_state.get_melee_reflect_damage() > 0:
 		statuses.append("Reflexo %d" % unit_state.get_melee_reflect_damage())
+	if unit_state.get_melee_attacker_action_multiplier() < 1.0:
+		statuses.append("Ressaca %.0f%%" % (unit_state.get_melee_attacker_action_multiplier() * 100.0))
 	if unit_state.physical_defense_multiplier_status < 1.0:
 		statuses.append("DEF F x%.2f" % unit_state.physical_defense_multiplier_status)
 	if unit_state.magic_defense_multiplier_status < 1.0:
@@ -849,6 +965,8 @@ func _build_status_text(unit_state: BattleUnitState) -> String:
 		statuses.append("Cleave %d" % unit_state.cleave_attacks_remaining)
 	if unit_state.has_forced_target():
 		statuses.append("Provocado")
+	if unit_state.is_charmed():
+		statuses.append("Encantado")
 	return _join_strings(statuses)
 
 func _team_name(team_side: int) -> String:
@@ -866,34 +984,9 @@ func _translated_skill_name(skill_data: SkillData) -> String:
 func _translated_card_description(card_data: CardData) -> String:
 	if card_data == null:
 		return ""
-
-	match card_data.id:
-		"demo_field_aid":
-			return "Recupera 3 de vida global do seu Mestre durante o PREP."
-		"demo_battle_orders":
-			return "Aumenta o ataque de uma unidade aliada nesta rodada."
-		"book_of_chaos":
-			return "A unidade alvo recebe +40% de ataque magico nesta rodada."
-		"cloak_of_darkness":
-			return "A unidade alvo inicia a batalha em furtividade."
-		"blinding_mist":
-			return "Uma nevoa atrasada reduz a confiabilidade dos ataques fisicos inimigos."
-		"blood_pact":
-			return "Quando o aliado marcado morrer, o Mestre ganha 40% da mana maxima."
-		"bone_prison":
-			return "Se um inimigo iniciar na celula marcada, ele fica preso e para de ganhar mana."
-		"toque_de_midas":
-			return "Se voce vencer a rodada, recebe ouro extra na proxima fase."
-		"saque_de_tributo":
-			return "Se voce vencer e causar dano ao Mestre inimigo, rouba ouro futuro dele."
-		"armadura_de_guerra":
-			return "A unidade alvo recebe +40% de defesa fisica nesta rodada."
-		"lanca_de_leonidas":
-			return "A unidade alvo recebe +40% de ataque fisico e +1 de alcance basico nesta rodada."
-		"tornado":
-			return "No inicio do combate, um inimigo aleatorio e puxado para uma casa vazia do seu lado."
-		_:
-			return "Suporte de preparo com efeito especial do deck."
+	if not card_data.description.is_empty():
+		return card_data.description.strip_edges()
+	return "Suporte de preparo com efeito especial do deck."
 
 func _ratio_to_percent_gain(multiplier: float) -> int:
 	return int(round((multiplier - 1.0) * 100.0))

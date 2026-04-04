@@ -6,21 +6,21 @@
 [resource]
 script = ExtResource("1_unit_data")
 id = "necromancer_master"
-display_name = "Mordos o necromante"
+display_name = "Mordos, o Necromante"
 race = 4
-class_type = 0
-class_label = "Mestre"
-class_short_label = "MST"
+class_type = 3
+class_label = "Suporte"
+class_short_label = "SUP"
 cost = 0
 max_hp = 28
 physical_attack = 6
 magic_attack = 9
 physical_defense = 5
 magic_defense = 6
-attack_range = 1
+attack_range = 3
 crit_chance = 0.05
 mana_max = 70
 mana_gain_on_attack = 18
 mana_gain_on_hit = 10
 master_skill_data = ExtResource("2_master_skill")
-description = "Mestre morto-vivo que acelera a propria mana com mortes e domina a mesa invocando esqueletos."
+description = "Mestre morto-vivo de retaguarda que acumula almas ao longo da luta e converte esse saldo em esqueletos cada vez mais fortes."

@@ -1,13 +1,17 @@
 extends RefCounted
 class_name LobbyManager
+const BattleConfigScript := preload("res://autoload/battle_config.gd")
 
 const CENTER_COLUMNS: Array[int] = [3, 2, 4, 1, 5, 0, 6]
 const BACKGROUND_COMBAT_MAX_ACTIONS := 240
+const BACKGROUND_BOUNCE_THRESHOLD := 2
+const BACKGROUND_RETARGET_COOLDOWN_TURNS := 2
 const LIVE_TABLE_PREP_SECONDS := 1.2
-const LIVE_TABLE_ACTION_STEP_SECONDS := BattleConfig.LIVE_TABLE_ACTION_STEP_SECONDS
-const LIVE_TABLE_OBSERVED_ACTION_STEP_SECONDS := BattleConfig.LIVE_TABLE_OBSERVED_ACTION_STEP_SECONDS
+const LIVE_TABLE_ACTION_STEP_SECONDS := BattleConfigScript.LIVE_TABLE_ACTION_STEP_SECONDS
+const LIVE_TABLE_OBSERVED_ACTION_STEP_SECONDS := BattleConfigScript.LIVE_TABLE_OBSERVED_ACTION_STEP_SECONDS
 const LIVE_TABLE_RESULT_HOLD_SECONDS := 0.9
 const CombatInstanceScript := preload("res://scripts/match/combat_instance.gd")
+const GameDataScript := preload("res://autoload/game_data.gd")
 
 var players: Dictionary = {}
 var player_order: Array[String] = []
@@ -18,6 +22,11 @@ var card_cache: Dictionary = {}
 var live_tables: Dictionary = {}
 var combat_instances: Dictionary = {}
 var player_table_map: Dictionary = {}
+var bot_prep_planner: EnemyPrepPlanner = EnemyPrepPlanner.new()
+var game_data_helper = GameDataScript.new()
+var elimination_order: Array[String] = []
+var match_winner_id: String = ""
+var match_finished: bool = false
 
 func setup_demo_lobby(player_count: int, p_local_player_id: String, default_deck_path: String = "") -> void:
 	players.clear()
@@ -25,6 +34,9 @@ func setup_demo_lobby(player_count: int, p_local_player_id: String, default_deck
 	live_tables.clear()
 	combat_instances.clear()
 	player_table_map.clear()
+	elimination_order.clear()
+	match_winner_id = ""
+	match_finished = false
 	local_player_id = p_local_player_id
 
 	for index in range(player_count):
@@ -40,6 +52,26 @@ func setup_demo_lobby(player_count: int, p_local_player_id: String, default_deck
 		player_order.append(player_id)
 		set_player_deck_path(player_id, default_deck_path)
 
+func assign_demo_bot_decks(deck_ids: Array[String], excluded_player_id: String = "") -> void:
+	var cycle_ids: Array[String] = []
+	for deck_id in deck_ids:
+		var resolved_id: String = str(deck_id)
+		if resolved_id.is_empty():
+			continue
+		cycle_ids.append(resolved_id)
+	if cycle_ids.is_empty():
+		cycle_ids = game_data_helper.get_available_deck_ids()
+	if cycle_ids.is_empty():
+		return
+
+	var bot_index: int = 0
+	for player_id in player_order:
+		if player_id == excluded_player_id:
+			continue
+		var deck_id: String = cycle_ids[bot_index % cycle_ids.size()]
+		set_player_deck_path(player_id, game_data_helper.get_deck_path(deck_id))
+		bot_index += 1
+
 func get_player_ids() -> Array[String]:
 	return player_order.duplicate()
 
@@ -52,6 +84,204 @@ func get_active_player_ids() -> Array[String]:
 		active_ids.append(player_id)
 	return active_ids
 
+func is_match_finished() -> bool:
+	return match_finished
+
+func get_match_winner_id() -> String:
+	return match_winner_id
+
+func get_match_winner() -> MatchPlayerState:
+	return get_player(match_winner_id)
+
+func apply_technical_byes(player_ids: Array[String], round_number: int) -> Array[Dictionary]:
+	var bye_entries: Array[Dictionary] = []
+	for player_id in player_ids:
+		var player_state: MatchPlayerState = get_player(player_id)
+		if player_state == null or player_state.eliminated:
+			continue
+		player_state.begin_round("", "", "BYE")
+		player_state.set_round_phase("BYE")
+		player_state.last_round_result_text = "Bye tecnico na rodada %d" % round_number
+		bye_entries.append({
+			"player_id": player_state.player_id,
+			"player_name": player_state.display_name,
+			"round_number": round_number,
+		})
+	return bye_entries
+
+func apply_post_combat_damage(
+	winner_id: String,
+	loser_id: String,
+	damage_value: int,
+	round_number: int,
+	apply_reward_cards: bool = true
+) -> Dictionary:
+	var normalized_damage: int = clampi(damage_value, 0, 8)
+	var winner_state: MatchPlayerState = get_player(winner_id)
+	var loser_state: MatchPlayerState = get_player(loser_id)
+	if winner_state != null and normalized_damage > 0:
+		winner_state.register_damage_dealt(normalized_damage)
+	if loser_state != null and normalized_damage > 0:
+		loser_state.current_life = maxi(0, loser_state.current_life - normalized_damage)
+	if apply_reward_cards and winner_state != null:
+		_apply_round_reward_cards(winner_state, loser_state, normalized_damage)
+	var eliminated_entries: Array[Dictionary] = process_eliminations_for_life_threshold(round_number)
+	return {
+		"winner_id": winner_id,
+		"loser_id": loser_id,
+		"damage": normalized_damage,
+		"eliminations": eliminated_entries,
+	}
+
+func process_eliminations_for_life_threshold(round_number: int) -> Array[Dictionary]:
+	var pending_states: Array[MatchPlayerState] = []
+	for player_id in player_order:
+		var player_state: MatchPlayerState = get_player(player_id)
+		if player_state == null or player_state.eliminated:
+			continue
+		if player_state.current_life > 0:
+			continue
+		pending_states.append(player_state)
+	pending_states.sort_custom(_sort_pending_elimination_states)
+
+	var eliminated_entries: Array[Dictionary] = []
+	for player_state in pending_states:
+		var elimination_entry: Dictionary = eliminate_player(player_state.player_id, round_number)
+		if elimination_entry.is_empty():
+			continue
+		eliminated_entries.append(elimination_entry)
+
+	finalize_match_if_needed(round_number)
+	return eliminated_entries
+
+func eliminate_player(player_id: String, round_number: int) -> Dictionary:
+	var player_state: MatchPlayerState = get_player(player_id)
+	if player_state == null:
+		return {}
+	if player_state.eliminated and player_state.placement > 0:
+		return {
+			"player_id": player_state.player_id,
+			"player_name": player_state.display_name,
+			"placement": player_state.placement,
+			"round_eliminated": player_state.round_eliminated,
+		}
+
+	var placement_value: int = clampi(get_active_player_ids().size(), 1, BattleConfigScript.LOBBY_PLAYER_COUNT)
+	player_state.current_life = maxi(0, player_state.current_life)
+	player_state.eliminated = true
+	player_state.placement = placement_value
+	player_state.round_eliminated = maxi(1, round_number)
+	player_state.opponent_id_this_round = ""
+	player_state.current_table_id = ""
+	player_state.current_round_phase = "ELIMINADO"
+	player_state.set_board_snapshot(_build_eliminated_snapshot(player_state, round_number))
+	player_table_map.erase(player_state.player_id)
+	if not elimination_order.has(player_state.player_id):
+		elimination_order.append(player_state.player_id)
+	print("ELIMINATION player=%s placement=%d round=%d" % [
+		player_state.display_name,
+		player_state.placement,
+		player_state.round_eliminated,
+	])
+	return {
+		"player_id": player_state.player_id,
+		"player_name": player_state.display_name,
+		"placement": player_state.placement,
+		"round_eliminated": player_state.round_eliminated,
+	}
+
+func finalize_match_if_needed(round_number: int) -> bool:
+	if match_finished:
+		return true
+	var active_ids: Array[String] = get_active_player_ids()
+	if active_ids.size() > 1:
+		return false
+	if active_ids.size() == 1:
+		match_winner_id = active_ids[0]
+		var winner_state: MatchPlayerState = get_player(match_winner_id)
+		if winner_state != null:
+			winner_state.eliminated = false
+			winner_state.placement = 1
+			winner_state.round_eliminated = -1
+		match_finished = true
+		print("RANKING winner=%s round=%d" % [match_winner_id, round_number])
+		return true
+	return false
+
+func get_match_ranking_entries() -> Array[Dictionary]:
+	var ranking_entries: Array[Dictionary] = []
+	for player_id in player_order:
+		var player_state: MatchPlayerState = get_player(player_id)
+		if player_state == null:
+			continue
+		ranking_entries.append({
+			"player_id": player_state.player_id,
+			"player_name": player_state.display_name,
+			"placement": player_state.placement,
+			"round_eliminated": player_state.round_eliminated,
+			"eliminated": player_state.eliminated,
+			"life": player_state.current_life,
+			"slot_index": player_state.slot_index,
+			"total_damage_dealt": player_state.total_damage_dealt,
+		})
+	ranking_entries.sort_custom(_sort_match_ranking_entries)
+	return ranking_entries
+
+func get_final_board_unit_names(player_id: String) -> Array[String]:
+	var snapshot: Dictionary = get_board_snapshot(player_id)
+	var friendly_units: Array[Dictionary] = []
+	for unit_variant in snapshot.get("units", []):
+		var unit_entry: Dictionary = unit_variant
+		if int(unit_entry.get("team_side", GameEnums.TeamSide.PLAYER)) != GameEnums.TeamSide.PLAYER:
+			continue
+		friendly_units.append(unit_entry)
+	friendly_units.sort_custom(_sort_final_snapshot_units)
+
+	var unit_names: Array[String] = []
+	for unit_entry in friendly_units:
+		var unit_name: String = str(unit_entry.get("display_name", "")).strip_edges()
+		if unit_name.is_empty():
+			continue
+		unit_names.append(unit_name)
+	return unit_names
+
+func _sort_pending_elimination_states(a: MatchPlayerState, b: MatchPlayerState) -> bool:
+	if a == null:
+		return false
+	if b == null:
+		return true
+	if a.current_life != b.current_life:
+		return a.current_life < b.current_life
+	if a.total_damage_taken != b.total_damage_taken:
+		return a.total_damage_taken > b.total_damage_taken
+	return a.slot_index > b.slot_index
+
+func _sort_match_ranking_entries(a: Dictionary, b: Dictionary) -> bool:
+	var placement_a: int = int(a.get("placement", 0))
+	var placement_b: int = int(b.get("placement", 0))
+	if placement_a <= 0:
+		placement_a = BattleConfigScript.LOBBY_PLAYER_COUNT + 1
+	if placement_b <= 0:
+		placement_b = BattleConfigScript.LOBBY_PLAYER_COUNT + 1
+	if placement_a != placement_b:
+		return placement_a < placement_b
+	var life_a: int = int(a.get("life", 0))
+	var life_b: int = int(b.get("life", 0))
+	if life_a != life_b:
+		return life_a > life_b
+	return int(a.get("slot_index", 0)) < int(b.get("slot_index", 0))
+
+func _sort_final_snapshot_units(a: Dictionary, b: Dictionary) -> bool:
+	var master_a: bool = bool(a.get("is_master", false))
+	var master_b: bool = bool(b.get("is_master", false))
+	if master_a != master_b:
+		return master_a
+	var cost_a: int = int(a.get("cost", 0))
+	var cost_b: int = int(b.get("cost", 0))
+	if cost_a != cost_b:
+		return cost_a > cost_b
+	return str(a.get("display_name", "")) < str(b.get("display_name", ""))
+
 func get_player(player_id: String) -> MatchPlayerState:
 	var player_variant: Variant = players.get(player_id, null)
 	if player_variant is MatchPlayerState:
@@ -60,6 +290,30 @@ func get_player(player_id: String) -> MatchPlayerState:
 
 func get_local_player() -> MatchPlayerState:
 	return get_player(local_player_id)
+
+func initialize_match_economy() -> void:
+	for player_id in player_order:
+		var player_state: MatchPlayerState = get_player(player_id)
+		if player_state == null:
+			continue
+		player_state.reset_economy(BattleConfigScript.STARTING_GOLD)
+
+func apply_round_income_for_prep(round_number: int) -> Array[Dictionary]:
+	var income_entries: Array[Dictionary] = []
+	if round_number <= 1:
+		return income_entries
+
+	for player_id in player_order:
+		var player_state: MatchPlayerState = get_player(player_id)
+		if player_state == null or player_state.eliminated:
+			continue
+		var income_breakdown: Dictionary = player_state.apply_round_income()
+		income_entries.append({
+			"player_id": player_state.player_id,
+			"player_name": player_state.display_name,
+			"income": income_breakdown,
+		})
+	return income_entries
 
 func set_player_deck_path(player_id: String, deck_path: String, reset_owned_cards: bool = true) -> void:
 	var player_state: MatchPlayerState = get_player(player_id)
@@ -94,30 +348,155 @@ func add_owned_card_to_player(player_id: String, card_path: String, claimed_roun
 		player_state.last_shop_round_claimed = claimed_round
 	return added
 
-func build_card_shop_offer(player_id: String, round_number: int, max_options: int = 2) -> Array[String]:
+func build_card_shop_offer_details(player_id: String, round_number: int, max_options: int = 2) -> Dictionary:
 	var player_state: MatchPlayerState = get_player(player_id)
 	if player_state == null:
-		return []
-	if round_number <= 0 or round_number % 3 != 0:
-		return []
+		return {
+			"player_id": player_id,
+			"round_number": round_number,
+			"offer_paths": [],
+			"available_paths": [],
+			"owned_paths": [],
+			"raw_card_pool_paths": [],
+			"valid_card_pool_paths": [],
+			"invalid_card_pool_paths": [],
+			"card_pool_paths": [],
+			"deck_path": "",
+			"card_pool_count": 0,
+			"valid_card_pool_count": 0,
+			"reason": "missing_player_state",
+		}
+
+	if round_number <= 0:
+		return {
+			"player_id": player_id,
+			"round_number": round_number,
+			"offer_paths": [],
+			"available_paths": [],
+			"owned_paths": player_state.get_owned_card_paths(),
+			"raw_card_pool_paths": [],
+			"valid_card_pool_paths": [],
+			"invalid_card_pool_paths": [],
+			"card_pool_paths": [],
+			"deck_path": player_state.deck_path,
+			"card_pool_count": 0,
+			"valid_card_pool_count": 0,
+			"reason": "invalid_round",
+		}
+
+	if round_number % 3 != 0:
+		return {
+			"player_id": player_id,
+			"round_number": round_number,
+			"offer_paths": [],
+			"available_paths": [],
+			"owned_paths": player_state.get_owned_card_paths(),
+			"raw_card_pool_paths": [],
+			"valid_card_pool_paths": [],
+			"invalid_card_pool_paths": [],
+			"card_pool_paths": [],
+			"deck_path": player_state.deck_path,
+			"card_pool_count": 0,
+			"valid_card_pool_count": 0,
+			"reason": "round_not_multiple_of_3",
+		}
 
 	var deck_data: DeckData = _load_deck_data(player_state.deck_path)
 	if deck_data == null:
-		return []
+		return {
+			"player_id": player_id,
+			"round_number": round_number,
+			"offer_paths": [],
+			"available_paths": [],
+			"owned_paths": player_state.get_owned_card_paths(),
+			"raw_card_pool_paths": [],
+			"valid_card_pool_paths": [],
+			"invalid_card_pool_paths": [],
+			"card_pool_paths": [],
+			"deck_path": player_state.deck_path,
+			"card_pool_count": 0,
+			"valid_card_pool_count": 0,
+			"reason": "missing_deck_data",
+		}
 
+	var owned_paths: Array[String] = player_state.get_owned_card_paths()
+	var card_pool_details: Dictionary = _resolve_card_pool_paths(deck_data.card_pool_paths)
+	var raw_card_pool_paths: Array[String] = card_pool_details.get("raw_paths", []).duplicate()
+	var valid_card_pool_paths: Array[String] = card_pool_details.get("valid_paths", []).duplicate()
+	var invalid_card_pool_paths: Array[String] = card_pool_details.get("invalid_paths", []).duplicate()
 	var available_paths: Array[String] = []
-	for card_path in deck_data.card_pool_paths:
-		var resolved_path: String = str(card_path)
-		if resolved_path.is_empty():
-			continue
+	for resolved_path in valid_card_pool_paths:
 		if player_state.has_owned_card_path(resolved_path):
 			continue
 		available_paths.append(resolved_path)
 
 	available_paths.sort_custom(_sort_card_offer_paths.bind(player_state.slot_index, round_number))
-	if max_options > 0 and available_paths.size() > max_options:
-		available_paths.resize(max_options)
-	return available_paths
+	var offer_paths: Array[String] = _trim_card_offer_paths(available_paths, max_options)
+
+	var reason: String = "ok"
+	if offer_paths.is_empty():
+		offer_paths = _trim_card_offer_paths(valid_card_pool_paths, max_options)
+		if not offer_paths.is_empty():
+			reason = "fallback_full_valid_pool"
+		elif not raw_card_pool_paths.is_empty():
+			reason = "no_valid_card_resources"
+		else:
+			reason = "empty_card_pool"
+	elif offer_paths.size() < max_options:
+		reason = "insufficient_unique_valid_cards"
+
+	return {
+		"player_id": player_id,
+		"round_number": round_number,
+		"offer_paths": offer_paths,
+		"available_paths": available_paths,
+		"owned_paths": owned_paths,
+		"raw_card_pool_paths": raw_card_pool_paths,
+		"valid_card_pool_paths": valid_card_pool_paths,
+		"invalid_card_pool_paths": invalid_card_pool_paths,
+		"card_pool_paths": raw_card_pool_paths,
+		"deck_path": player_state.deck_path,
+		"card_pool_count": raw_card_pool_paths.size(),
+		"valid_card_pool_count": valid_card_pool_paths.size(),
+		"reason": reason,
+	}
+
+func build_card_shop_offer(player_id: String, round_number: int, max_options: int = 2) -> Array[String]:
+	var details: Dictionary = build_card_shop_offer_details(player_id, round_number, max_options)
+	return details.get("offer_paths", []).duplicate()
+
+func _normalize_card_pool_paths(card_pool_paths: Array) -> Array[String]:
+	var normalized_paths: Array[String] = []
+	for path_variant in card_pool_paths:
+		var resolved_path: String = str(path_variant)
+		if resolved_path.is_empty():
+			continue
+		if normalized_paths.has(resolved_path):
+			continue
+		normalized_paths.append(resolved_path)
+	return normalized_paths
+
+func _resolve_card_pool_paths(card_pool_paths: Array) -> Dictionary:
+	var raw_paths: Array[String] = _normalize_card_pool_paths(card_pool_paths)
+	var valid_paths: Array[String] = []
+	var invalid_paths: Array[String] = []
+	for resolved_path in raw_paths:
+		var card_data: CardData = _load_card_data(resolved_path)
+		if card_data == null:
+			invalid_paths.append(resolved_path)
+			continue
+		valid_paths.append(resolved_path)
+	return {
+		"raw_paths": raw_paths,
+		"valid_paths": valid_paths,
+		"invalid_paths": invalid_paths,
+	}
+
+func _trim_card_offer_paths(source_paths: Array[String], max_options: int) -> Array[String]:
+	var trimmed_paths: Array[String] = source_paths.duplicate()
+	if max_options > 0 and trimmed_paths.size() > max_options:
+		trimmed_paths.resize(max_options)
+	return trimmed_paths
 
 func grant_periodic_cards_for_round(round_number: int, excluded_player_ids: Array[String] = []) -> Array[Dictionary]:
 	var granted_entries: Array[Dictionary] = []
@@ -134,9 +513,16 @@ func grant_periodic_cards_for_round(round_number: int, excluded_player_ids: Arra
 		if player_state.last_shop_round_claimed >= round_number:
 			continue
 
-		var offer_paths: Array[String] = build_card_shop_offer(player_id, round_number)
+		var offer_details: Dictionary = build_card_shop_offer_details(player_id, round_number)
+		var offer_paths: Array[String] = offer_details.get("offer_paths", []).duplicate()
 		if offer_paths.is_empty():
 			player_state.last_shop_round_claimed = round_number
+			print("SHOP bot cancelado: player=%s round=%d reason=%s offer=%s" % [
+				player_state.display_name,
+				round_number,
+				str(offer_details.get("reason", "insufficient_options")),
+				_join_strings(offer_paths),
+			])
 			continue
 
 		var chosen_path: String = _choose_background_shop_pick(player_state, offer_paths, round_number)
@@ -181,7 +567,79 @@ func get_board_snapshot(player_id: String) -> Dictionary:
 	var player_state: MatchPlayerState = get_player(player_id)
 	if player_state == null:
 		return {}
+	var combat_instance = get_live_combat_instance_for_player(player_id)
+	if combat_instance != null:
+		return combat_instance.get_observer_snapshot_for_player(player_id)
 	return player_state.get_board_snapshot()
+
+func get_table_id_for_player(player_id: String) -> String:
+	if player_id.is_empty():
+		return ""
+	return str(player_table_map.get(player_id, ""))
+
+func get_table_for_player(player_id: String) -> Dictionary:
+	var table_id: String = get_table_id_for_player(player_id)
+	if table_id.is_empty():
+		return {}
+	return get_table(table_id)
+
+func get_table(table_id: String) -> Dictionary:
+	if table_id.is_empty():
+		return {}
+	var table_variant: Variant = live_tables.get(table_id, {})
+	if table_variant is Dictionary:
+		return (table_variant as Dictionary).duplicate(true)
+	return {}
+
+func get_live_combat_instance(table_id: String):
+	if table_id.is_empty():
+		return null
+	return combat_instances.get(table_id, null)
+
+func get_runtime_for_table(table_id: String, viewer_player_id: String = "") -> Dictionary:
+	var table: Dictionary = get_table(table_id)
+	if table.is_empty():
+		return {}
+
+	var combat_instance = get_live_combat_instance(table_id)
+	if combat_instance == null:
+		return {}
+
+	var player_a_id: String = str(table.get("player_a_id", ""))
+	var player_b_id: String = str(table.get("player_b_id", ""))
+	var resolved_viewer_player_id: String = viewer_player_id
+	if resolved_viewer_player_id.is_empty():
+		resolved_viewer_player_id = player_a_id
+	var player_state: MatchPlayerState = get_player(resolved_viewer_player_id)
+	var player_a_state: MatchPlayerState = get_player(player_a_id)
+	var player_b_state: MatchPlayerState = get_player(player_b_id)
+	var opponent_id: String = player_b_id if player_a_id == resolved_viewer_player_id else player_a_id
+	var opponent_state: MatchPlayerState = get_player(opponent_id)
+	var viewer_team_side: int = combat_instance.get_relative_team_for_player(resolved_viewer_player_id)
+
+	return {
+		"player_id": resolved_viewer_player_id,
+		"player_name": player_state.display_name if player_state != null else resolved_viewer_player_id,
+		"opponent_id": opponent_id,
+		"opponent_name": opponent_state.display_name if opponent_state != null else opponent_id,
+		"table_player_a_id": player_a_id,
+		"table_player_a_name": player_a_state.display_name if player_a_state != null else player_a_id,
+		"table_player_b_id": player_b_id,
+		"table_player_b_name": player_b_state.display_name if player_b_state != null else player_b_id,
+		"table_id": table_id,
+		"table": table,
+		"combat_instance": combat_instance,
+		"unit_states": combat_instance.unit_states,
+		"viewer_team_side": viewer_team_side,
+		"phase": str(combat_instance.phase_name),
+		"round_number": int(combat_instance.round_number),
+	}
+
+func get_observed_runtime(player_id: String) -> Dictionary:
+	var table_id: String = get_table_id_for_player(player_id)
+	if table_id.is_empty():
+		return {}
+	return get_runtime_for_table(table_id, player_id)
 
 func prepare_live_tables_for_round(
 	pairings: Array[Dictionary],
@@ -230,17 +688,48 @@ func prepare_live_tables_for_round(
 			processed_ids[player_b_id] = true
 			continue
 
-		var table: Dictionary = _create_live_table(pairing, player_a, player_b, round_number)
-		var table_id: String = str(table.get("table_id", ""))
+		var lineup_a: Dictionary = _build_background_lineup(player_a, round_number)
+		var lineup_b: Dictionary = _build_background_lineup(player_b, round_number)
+		var snapshot_a: Dictionary = _build_table_snapshot(
+			player_a,
+			player_b,
+			lineup_a,
+			lineup_b,
+			round_number,
+			"PREPARACAO",
+			""
+		)
+		var combat_instance = CombatInstanceScript.new().setup_from_pairing(
+			pairing,
+			round_number,
+			player_a,
+			player_b,
+			snapshot_a,
+			LIVE_TABLE_RESULT_HOLD_SECONDS
+		)
+		combat_instance.owner_lobby_manager = self
+		var table_id: String = combat_instance.table_id
 		if table_id.is_empty():
 			continue
-		live_tables[table_id] = table
-		combat_instances[table_id] = _build_combat_instance_from_live_table(table, player_a, player_b)
+		live_tables[table_id] = {
+			"table_id": table_id,
+			"table_index": combat_instance.table_index,
+			"round_number": round_number,
+			"player_a_id": player_a_id,
+			"player_b_id": player_b_id,
+		}
+		combat_instances[table_id] = combat_instance
 		player_table_map[player_a_id] = table_id
 		player_table_map[player_b_id] = table_id
 		player_a.begin_round(player_b_id, table_id)
 		player_b.begin_round(player_a_id, table_id)
-		_sync_live_table_snapshots(table)
+		_sync_combat_instance_snapshots(combat_instance)
+		print("LIVE_TABLE created: %s | round=%d | %s vs %s" % [
+			table_id,
+			round_number,
+			player_a.display_name,
+			player_b.display_name,
+		])
 		processed_ids[player_a_id] = true
 		processed_ids[player_b_id] = true
 
@@ -260,57 +749,46 @@ func prepare_live_tables_for_round(
 
 func begin_live_tables_battle(round_number: int = -1) -> bool:
 	var changed: bool = false
-	for table_id in live_tables.keys():
-		var table: Dictionary = live_tables.get(table_id, {})
-		if table.is_empty():
+	for table_id in combat_instances.keys():
+		var combat_instance = combat_instances.get(table_id, null)
+		if combat_instance == null:
 			continue
-		if round_number > 0 and int(table.get("round_number", 0)) != round_number:
+		if not combat_instance.matches_round(round_number):
 			continue
-		if str(table.get("phase", "PREPARACAO")) != "PREPARACAO":
+		if combat_instance.phase_name != "PREPARACAO":
 			continue
-		_start_live_table_battle(table)
-		live_tables[table_id] = table
+		combat_instance.begin_battle()
+		_sync_combat_instance_snapshots(combat_instance)
+		print("LIVE_TABLE battle_started: %s | round=%d" % [
+			combat_instance.table_id,
+			combat_instance.round_number,
+		])
 		changed = true
 	return changed
 
 func update_live_tables(delta: float, observed_player_id: String = "") -> bool:
 	var changed: bool = false
-	for table_id in live_tables.keys():
-		var table: Dictionary = live_tables.get(table_id, {})
-		if table.is_empty():
+	for table_id in combat_instances.keys():
+		var combat_instance = combat_instances.get(table_id, null)
+		if combat_instance == null:
 			continue
-		if _update_live_table(table, delta, observed_player_id):
-			live_tables[table_id] = table
+		if combat_instance.process_tick(delta):
+			_sync_combat_instance_snapshots(combat_instance)
 			changed = true
 	return changed
 
 func force_finish_live_tables(round_number: int = -1) -> Array[Dictionary]:
 	var results: Array[Dictionary] = []
-	for table_id in live_tables.keys():
-		var table: Dictionary = live_tables.get(table_id, {})
-		if table.is_empty():
+	for table_id in combat_instances.keys():
+		var combat_instance = combat_instances.get(table_id, null)
+		if combat_instance == null:
 			continue
-		if round_number > 0 and int(table.get("round_number", 0)) != round_number:
+		if not combat_instance.matches_round(round_number):
 			continue
-		if str(table.get("phase", "PREPARACAO")) == "PREPARACAO":
-			_start_live_table_battle(table)
-		if str(table.get("phase", "PREPARACAO")) == "BATALHA":
-			while str(table.get("phase", "PREPARACAO")) == "BATALHA":
-				if _live_table_combat_finished(table):
-					break
-				_advance_live_table_action(table)
-			_finalize_live_table_result(table)
-		live_tables[table_id] = table
-		var result_entry: Dictionary = {
-			"table_id": table_id,
-			"player_a_id": str(table.get("player_a_id", "")),
-			"player_b_id": str(table.get("player_b_id", "")),
-			"result_text": str(table.get("result_text", "")),
-			"winner_id": str(table.get("winner_id", "")),
-			"loser_id": str(table.get("loser_id", "")),
-			"damage": int(table.get("damage", 0)),
-		}
-		if not result_entry.get("result_text", "").is_empty():
+		combat_instance.force_finish()
+		_sync_combat_instance_snapshots(combat_instance)
+		var result_entry: Dictionary = combat_instance.build_result_entry()
+		if not str(result_entry.get("result_text", "")).is_empty():
 			results.append(result_entry)
 	return results
 
@@ -318,10 +796,50 @@ func is_player_in_live_table(player_id: String) -> bool:
 	return player_table_map.has(player_id)
 
 func get_live_combat_instance_for_player(player_id: String):
-	var table_id: String = str(player_table_map.get(player_id, ""))
-	if table_id.is_empty() or not combat_instances.has(table_id):
-		return null
-	return combat_instances.get(table_id, null)
+	return get_live_combat_instance(get_table_id_for_player(player_id))
+
+func has_active_live_tables(round_number: int = -1) -> bool:
+	for table_id in combat_instances.keys():
+		var combat_instance = combat_instances.get(table_id, null)
+		if combat_instance == null:
+			continue
+		if not combat_instance.matches_round(round_number):
+			continue
+		var phase_name: String = str(combat_instance.phase_name)
+		if phase_name == "PREPARACAO" or phase_name == "BATALHA":
+			return true
+	return false
+
+func are_live_tables_resolved(round_number: int = -1) -> bool:
+	return not has_active_live_tables(round_number)
+
+func count_live_table_phases(round_number: int = -1) -> Dictionary:
+	var counts: Dictionary = {
+		"PREPARACAO": 0,
+		"BATALHA": 0,
+		"RESULTADO": 0,
+	}
+	for table_id in combat_instances.keys():
+		var combat_instance = combat_instances.get(table_id, null)
+		if combat_instance == null:
+			continue
+		if not combat_instance.matches_round(round_number):
+			continue
+		var phase_name: String = str(combat_instance.phase_name)
+		counts[phase_name] = int(counts.get(phase_name, 0)) + 1
+	return counts
+
+func _sync_combat_instance_snapshots(combat_instance) -> void:
+	if combat_instance == null:
+		return
+	var player_a: MatchPlayerState = get_player(str(combat_instance.player_a_id))
+	var player_b: MatchPlayerState = get_player(str(combat_instance.player_b_id))
+	if player_a == null or player_b == null:
+		return
+	player_a.set_round_phase(str(combat_instance.phase_name))
+	player_b.set_round_phase(str(combat_instance.phase_name))
+	player_a.set_board_snapshot(combat_instance.get_observer_snapshot_for_player(player_a.player_id))
+	player_b.set_board_snapshot(combat_instance.get_observer_snapshot_for_player(player_b.player_id))
 
 func _create_live_table(
 	pairing: Dictionary,
@@ -359,6 +877,8 @@ func _create_live_table(
 		"enemy_turn_cursor": 0,
 		"action_time_accumulator": 0.0,
 		"actions_taken": 0,
+		"failsafe_triggered": false,
+		"failsafe_reason": "",
 		"applied_result": false,
 		"winner_id": "",
 		"loser_id": "",
@@ -384,17 +904,26 @@ func _build_combat_instance_from_live_table(
 	var pairing: Dictionary = {
 		"table_index": int(table.get("table_index", -1)),
 	}
+	var snapshot_a: Dictionary = _build_table_snapshot(
+		player_a,
+		player_b,
+		table.get("lineup_a", {}),
+		table.get("lineup_b", {}),
+		int(table.get("round_number", 0)),
+		str(table.get("phase", "PREPARACAO")),
+		str(table.get("player_a_result_text", "")),
+		str(table.get("card_summary_a", "")),
+		[]
+	)
 	var combat_instance = CombatInstanceScript.new().setup_from_pairing(
 		pairing,
 		int(table.get("round_number", 0)),
 		player_a,
 		player_b,
-		table.get("lineup_a", {}),
-		table.get("lineup_b", {}),
-		table.get("sim_units", []),
-		int(table.get("acting_team", GameEnums.TeamSide.PLAYER)),
+		snapshot_a,
 		LIVE_TABLE_RESULT_HOLD_SECONDS
 	)
+	combat_instance.owner_lobby_manager = self
 	_sync_combat_instance_from_live_table(table)
 	return combat_instance
 
@@ -405,26 +934,7 @@ func _sync_combat_instance_from_live_table(table: Dictionary) -> void:
 	var combat_instance = combat_instances.get(table_id, null)
 	if combat_instance == null:
 		return
-
-	combat_instance.phase_name = str(table.get("phase", "PREPARACAO"))
-	combat_instance.acting_team = int(table.get("acting_team", GameEnums.TeamSide.PLAYER))
-	combat_instance.player_turn_cursor = int(table.get("player_turn_cursor", 0))
-	combat_instance.enemy_turn_cursor = int(table.get("enemy_turn_cursor", 0))
-	combat_instance.action_time_accumulator = float(table.get("action_time_accumulator", 0.0))
-	combat_instance.actions_taken = int(table.get("actions_taken", 0))
-	combat_instance.applied_result = bool(table.get("applied_result", false))
-	combat_instance.winner_id = str(table.get("winner_id", ""))
-	combat_instance.loser_id = str(table.get("loser_id", ""))
-	combat_instance.damage = int(table.get("damage", 0))
-	combat_instance.winner_survivors = int(table.get("winner_survivors", -1))
-	combat_instance.loser_survivors = int(table.get("loser_survivors", -1))
-	combat_instance.player_a_result_text = str(table.get("player_a_result_text", ""))
-	combat_instance.player_b_result_text = str(table.get("player_b_result_text", ""))
-	combat_instance.result_text = str(table.get("result_text", ""))
-	combat_instance.result_time_remaining = float(table.get("result_time_remaining", LIVE_TABLE_RESULT_HOLD_SECONDS))
-	combat_instance.player_a_card_summary = str(table.get("card_summary_a", ""))
-	combat_instance.player_b_card_summary = str(table.get("card_summary_b", ""))
-	combat_instance.sim_units = table.get("sim_units", []).duplicate(true)
+	_sync_combat_instance_snapshots(combat_instance)
 
 func _update_live_table(table: Dictionary, delta: float, observed_player_id: String) -> bool:
 	if table.is_empty():
@@ -478,10 +988,16 @@ func _start_live_table_battle(table: Dictionary) -> void:
 	table["action_time_accumulator"] = 0.0
 	table["actions_taken"] = 0
 	table["result_text"] = ""
+	table["failsafe_triggered"] = false
+	table["failsafe_reason"] = ""
 	_sync_combat_instance_from_live_table(table)
 	var combat_instance = combat_instances.get(str(table.get("table_id", "")), null)
 	if combat_instance != null:
 		combat_instance.begin_battle()
+	print("LIVE_TABLE battle_started: %s | round=%d" % [
+		str(table.get("table_id", "")),
+		int(table.get("round_number", 0)),
+	])
 	_sync_live_table_snapshots(table)
 
 func _advance_live_table_action(table: Dictionary) -> bool:
@@ -505,7 +1021,7 @@ func _advance_live_table_action(table: Dictionary) -> bool:
 	var combat_instance = combat_instances.get(table_id, null)
 	var actor_name: String = str(actor.get("display_name", "Unidade"))
 	var from_coord: Vector2i = actor.get("coord", Vector2i(-1, -1))
-	_background_take_action(actor, sim_units)
+	_background_take_action(actor, sim_units, table_id)
 	if combat_instance != null:
 		combat_instance.push_event("unit_action", {
 			"actor": actor_name,
@@ -563,6 +1079,11 @@ func _finalize_live_table_result(table: Dictionary) -> void:
 		return
 
 	var sim_units: Array[Dictionary] = table.get("sim_units", [])
+	var reached_action_cap: bool = (
+		int(table.get("actions_taken", 0)) >= BACKGROUND_COMBAT_MAX_ACTIONS
+		and _background_team_alive(sim_units, GameEnums.TeamSide.PLAYER)
+		and _background_team_alive(sim_units, GameEnums.TeamSide.ENEMY)
+	)
 	var winner_team: int = _background_winner_team(sim_units)
 	var winner_id: String = ""
 	var loser_id: String = ""
@@ -577,13 +1098,14 @@ func _finalize_live_table_result(table: Dictionary) -> void:
 		loser_id = player_b.player_id if winner_team == GameEnums.TeamSide.PLAYER else player_a.player_id
 		winner_survivors = _count_background_survivors(sim_units, winner_team)
 		loser_survivors = _count_background_survivors(sim_units, _opposite_team(winner_team))
-		damage = clampi(maxi(1, winner_survivors), 1, 8)
-
-		var loser_state: MatchPlayerState = get_player(loser_id)
-		if loser_state != null:
-			loser_state.current_life = maxi(0, loser_state.current_life - damage)
-			loser_state.eliminated = loser_state.current_life <= 0
-		_apply_round_reward_cards(get_player(winner_id), loser_state, damage)
+		damage = BattleConfigScript.calculate_post_combat_damage({
+			"winner_id": winner_id,
+			"loser_id": loser_id,
+		}, int(table.get("round_number", 0)), {
+			"survivors": winner_survivors,
+		})
+		var resolution: Dictionary = apply_post_combat_damage(winner_id, loser_id, damage, int(table.get("round_number", 0)))
+		damage = int(resolution.get("damage", damage))
 
 		if winner_team == GameEnums.TeamSide.PLAYER:
 			player_a_result_text = "%s venceu %s ao vivo e causou %d de dano" % [
@@ -614,6 +1136,8 @@ func _finalize_live_table_result(table: Dictionary) -> void:
 	player_b.eliminated = player_b.current_life <= 0
 	table["phase"] = "RESULTADO"
 	table["applied_result"] = true
+	table["failsafe_triggered"] = reached_action_cap and winner_team >= -1
+	table["failsafe_reason"] = "background_action_cap" if reached_action_cap else ""
 	table["winner_id"] = winner_id
 	table["loser_id"] = loser_id
 	table["damage"] = damage
@@ -631,12 +1155,27 @@ func _finalize_live_table_result(table: Dictionary) -> void:
 	var combat_instance = combat_instances.get(str(table.get("table_id", "")), null)
 	if combat_instance != null:
 		combat_instance.begin_result(LIVE_TABLE_RESULT_HOLD_SECONDS)
+		if reached_action_cap:
+			combat_instance.push_event("failsafe_triggered", {
+				"reason": "background_action_cap",
+				"actions_taken": int(table.get("actions_taken", 0)),
+			})
 		combat_instance.push_event("battle_result", {
 			"winner_id": winner_id,
 			"loser_id": loser_id,
 			"damage": damage,
 			"result_text": player_a_result_text,
 		})
+	if reached_action_cap:
+		print("FAILSAFE [LIVE_TABLE %s]: combate encerrado no limite de acoes=%d" % [
+			str(table.get("table_id", "")),
+			int(table.get("actions_taken", 0)),
+		])
+	print("LIVE_TABLE result: %s | vencedor=%s dano=%d" % [
+		str(table.get("table_id", "")),
+		winner_id if not winner_id.is_empty() else "EMPATE",
+		damage,
+	])
 	_sync_live_table_snapshots(table)
 
 func _sync_live_table_snapshots(table: Dictionary) -> void:
@@ -734,7 +1273,7 @@ func _apply_live_table_card_effect(
 		GameEnums.SupportCardEffectType.PLAYER_LIFE_HEAL:
 			if owner_state != null and card_data.global_life_heal > 0:
 				var previous_life: int = owner_state.current_life
-				owner_state.current_life = mini(BattleConfig.GLOBAL_LIFE, owner_state.current_life + card_data.global_life_heal)
+				owner_state.current_life = mini(BattleConfigScript.GLOBAL_LIFE, owner_state.current_life + card_data.global_life_heal)
 				if owner_state.current_life > previous_life:
 					return "%s curou %+d PV" % [card_data.display_name, owner_state.current_life - previous_life]
 			return ""
@@ -851,7 +1390,7 @@ func _pick_live_table_enemy_trap_target(sim_units: Array[Dictionary], team_side:
 			continue
 		var coord: Vector2i = unit_entry.get("coord", Vector2i(-1, -1))
 		var score: int = abs(coord.x - 3) * 10
-		score += coord.y if team_side == GameEnums.TeamSide.PLAYER else (BattleConfig.BOARD_HEIGHT - 1 - coord.y)
+		score += coord.y if team_side == GameEnums.TeamSide.PLAYER else (BattleConfigScript.BOARD_HEIGHT - 1 - coord.y)
 		if bool(unit_entry.get("is_master", false)):
 			score += 8
 		if best_target.is_empty() or score < best_score:
@@ -958,10 +1497,13 @@ func _apply_background_match_result(
 	var loser_state: MatchPlayerState = null
 	if not loser_id.is_empty():
 		loser_state = get_player(loser_id)
-		if loser_state != null:
-			loser_state.current_life = maxi(0, loser_state.current_life - damage)
-			loser_state.eliminated = loser_state.current_life <= 0
-	_apply_round_reward_cards(winner_state, loser_state, damage)
+	apply_post_combat_damage(
+		str(result.get("winner_id", "")),
+		loser_id,
+		damage,
+		int(result.get("round_number", 0)),
+		true
+	)
 
 	player_a.eliminated = player_a.current_life <= 0
 	player_b.eliminated = player_b.current_life <= 0
@@ -997,20 +1539,19 @@ func _build_background_lineup(player_state: MatchPlayerState, round_number: int)
 			"master_name": "Sem mestre",
 		}
 
-	var available_gold: int = BattleConfig.STARTING_GOLD + ((round_number - 1) * BattleConfig.GOLD_PER_ROUND)
-	if player_state.banked_gold > 0:
-		available_gold += player_state.banked_gold
-		player_state.banked_gold = 0
+	var available_gold: int = maxi(0, player_state.current_gold)
 	var effective_gold: int = _effective_gold_budget(available_gold, round_number)
-	var field_limit: int = _effective_field_limit(BattleConfig.MAX_FIELD_UNITS, round_number)
-	var remaining_gold: int = effective_gold
-	var occupied_coords: Array[Vector2i] = []
+	var field_limit: int = _effective_field_limit(BattleConfigScript.MAX_FIELD_UNITS, round_number)
 	var units: Array[Dictionary] = []
 	var total_power: int = _estimate_owned_cards_power_bonus(player_state.get_owned_card_paths())
+	var planner_current_units: Array[Dictionary] = []
+	var candidate_entries: Array[Dictionary] = []
+	var total_candidate_power: int = 0
+	var valid_candidate_count: int = 0
 
 	var master_data: UnitData = _load_unit_data(deck_data.master_data_path)
 	if master_data != null:
-		var master_coord := Vector2i(3, BattleConfig.BOARD_HEIGHT - 1)
+		var master_coord := Vector2i(3, BattleConfigScript.BOARD_HEIGHT - 1)
 		units.append(_build_snapshot_unit_entry(
 			master_data,
 			deck_data.master_data_path,
@@ -1018,26 +1559,66 @@ func _build_background_lineup(player_state: MatchPlayerState, round_number: int)
 			true,
 			GameEnums.TeamSide.PLAYER
 		))
-		occupied_coords.append(master_coord)
+		planner_current_units.append({
+			"unit_data": master_data,
+			"unit_id": master_data.id,
+			"display_name": master_data.display_name,
+			"race": master_data.race,
+			"class_type": master_data.class_type,
+			"cost": master_data.get_effective_cost(),
+			"coord": master_coord,
+			"team_side": GameEnums.TeamSide.PLAYER,
+			"is_master": true,
+			"attack_range": master_data.attack_range,
+			"physical_attack": master_data.physical_attack,
+			"magic_attack": master_data.magic_attack,
+			"physical_defense": master_data.physical_defense,
+			"magic_defense": master_data.magic_defense,
+			"max_hp": master_data.max_hp,
+			"current_hp": master_data.max_hp,
+		})
 		total_power += _estimate_unit_power(master_data, true, player_state.slot_index, round_number)
 
-	var unit_candidates: Array[Dictionary] = _load_sorted_unit_candidates(deck_data, player_state.slot_index, round_number)
-	var non_master_count: int = 0
-	for candidate in unit_candidates:
+	for unit_path_variant in deck_data.unit_pool_paths:
+		var unit_path: String = str(unit_path_variant)
+		if unit_path.is_empty():
+			continue
+		var unit_data: UnitData = _load_unit_data(unit_path)
+		if unit_data == null:
+			continue
+		candidate_entries.append({
+			"slot_index": -1,
+			"unit_data": unit_data,
+			"unit_path": unit_path,
+		})
+		total_candidate_power += _estimate_unit_power(unit_data, false, player_state.slot_index, round_number)
+		valid_candidate_count += 1
+
+	var deck_average_power: float = 0.0
+	if valid_candidate_count > 0:
+		deck_average_power = float(total_candidate_power) / float(valid_candidate_count)
+
+	var purchase_result: Dictionary = bot_prep_planner.build_purchase_plan(
+		candidate_entries,
+		planner_current_units,
+		effective_gold,
+		0,
+		field_limit,
+		GameEnums.TeamSide.PLAYER,
+		master_data,
+		deck_average_power,
+		player_state.player_id
+	)
+	var budget_gold_left: int = int(purchase_result.get("gold_left", effective_gold))
+	var spent_gold: int = maxi(0, effective_gold - budget_gold_left)
+	player_state.set_current_gold_capped(available_gold - spent_gold, "bot_prep_remaining", false)
+	var purchase_orders: Array[Dictionary] = purchase_result.get("orders", [])
+	for candidate in purchase_orders:
 		var unit_data: UnitData = candidate.get("unit_data", null)
 		var unit_path: String = str(candidate.get("unit_path", ""))
 		if unit_data == null:
 			continue
-		if non_master_count >= field_limit:
-			break
-		if unit_data.cost > remaining_gold:
-			continue
-
-		var target_coord: Vector2i = _choose_snapshot_coord(
-			unit_data.class_type,
-			occupied_coords,
-			player_state.slot_index + round_number
-		)
+		var target_coord: Vector2i = candidate.get("coord", Vector2i(-1, -1))
 		if not _is_valid_snapshot_coord(target_coord):
 			continue
 
@@ -1048,42 +1629,38 @@ func _build_background_lineup(player_state: MatchPlayerState, round_number: int)
 			false,
 			GameEnums.TeamSide.PLAYER
 		))
-		occupied_coords.append(target_coord)
-		remaining_gold -= unit_data.cost
-		non_master_count += 1
 		total_power += _estimate_unit_power(unit_data, false, player_state.slot_index, round_number)
 
-	_apply_background_deck_passives(units)
+	_apply_background_deck_passives(units, player_state.current_gold)
 	return {
 		"player_id": player_state.player_id,
 		"player_name": player_state.display_name,
-		"gold": available_gold,
+		"gold": player_state.current_gold,
 		"gold_budget": effective_gold,
 		"units": units,
 		"unit_count": units.size(),
-		"non_master_count": non_master_count,
+		"non_master_count": purchase_orders.size(),
 		"power_rating": total_power,
 		"master_name": str(units[0].get("display_name", "Mestre")) if not units.is_empty() else "Mestre",
 	}
 
-func _apply_background_deck_passives(units: Array[Dictionary]) -> void:
-	var thrax_master_coord: Vector2i = Vector2i(-1, -1)
+func _apply_background_deck_passives(units: Array[Dictionary], saved_gold: int = 0) -> void:
+	var has_thrax_master: bool = false
 	for unit_entry in units:
 		if str(unit_entry.get("unit_id", "")) == "thrax_master":
-			thrax_master_coord = unit_entry.get("coord", Vector2i(-1, -1))
+			has_thrax_master = true
 			break
-	if thrax_master_coord == Vector2i(-1, -1):
+	if not has_thrax_master or saved_gold <= 0:
 		return
 
 	for unit_entry in units:
-		if bool(unit_entry.get("is_master", false)):
-			continue
-		var coord: Vector2i = unit_entry.get("coord", Vector2i(-1, -1))
-		var distance: int = abs(coord.x - thrax_master_coord.x) + abs(coord.y - thrax_master_coord.y)
-		if distance != 1:
-			continue
 		var base_attack: int = int(unit_entry.get("physical_attack", 0))
-		unit_entry["physical_attack"] = base_attack + int(ceil(float(base_attack) * 0.30))
+		if base_attack <= 0:
+			continue
+		var bonus_attack: int = int(round(float(base_attack) * float(saved_gold) * 0.01))
+		if bonus_attack <= 0:
+			bonus_attack = 1
+		unit_entry["physical_attack"] = base_attack + bonus_attack
 
 func _apply_round_reward_cards(winner_state: MatchPlayerState, loser_state: MatchPlayerState, damage: int) -> void:
 	if winner_state == null:
@@ -1102,12 +1679,12 @@ func _apply_round_reward_cards(winner_state: MatchPlayerState, loser_state: Matc
 				tribute_amount = maxi(tribute_amount, card_data.tribute_steal_amount)
 
 	if bonus_gold > 0:
-		winner_state.banked_gold += bonus_gold
+		winner_state.add_bonus_next_round_gold(bonus_gold)
 
-	if tribute_amount > 0 and damage > 0 and loser_state != null and loser_state.banked_gold > 0:
-		var stolen: int = mini(loser_state.banked_gold, tribute_amount)
-		loser_state.banked_gold -= stolen
-		winner_state.banked_gold += stolen
+	if tribute_amount > 0 and damage > 0 and loser_state != null and loser_state.bonus_next_round_gold > 0:
+		var stolen: int = mini(loser_state.bonus_next_round_gold, tribute_amount)
+		loser_state.bonus_next_round_gold -= stolen
+		winner_state.add_bonus_next_round_gold(stolen)
 
 func _build_table_snapshot(
 	viewer_state: MatchPlayerState,
@@ -1171,8 +1748,8 @@ func _build_empty_snapshot(player_state: MatchPlayerState, round_number: int, ph
 		"round_number": round_number,
 		"phase": phase_name,
 		"life": life_value,
-		"gold": 0,
-		"gold_budget": 0,
+		"gold": player_state.current_gold if player_state != null else 0,
+		"gold_budget": player_state.current_gold if player_state != null else 0,
 		"units": [],
 		"unit_count": 0,
 		"non_master_count": 0,
@@ -1213,7 +1790,7 @@ func _build_snapshot_unit_entry(
 		"is_master": is_master,
 		"class_label": _resolve_unit_class_label(unit_data),
 		"race_name": _race_name(unit_data.race),
-		"cost": unit_data.cost,
+		"cost": unit_data.get_effective_cost(),
 		"current_hp": unit_data.max_hp,
 		"max_hp": unit_data.max_hp,
 		"current_mana": 0,
@@ -1265,10 +1842,12 @@ func _sort_unit_candidates(a: Dictionary, b: Dictionary, player_seed: int, round
 	if priority_a != priority_b:
 		return priority_a < priority_b
 
-	if round_number <= 2 and unit_a.cost != unit_b.cost:
-		return unit_a.cost < unit_b.cost
-	if unit_a.cost != unit_b.cost:
-		return unit_a.cost > unit_b.cost
+	var effective_cost_a: int = unit_a.get_effective_cost()
+	var effective_cost_b: int = unit_b.get_effective_cost()
+	if round_number <= 2 and effective_cost_a != effective_cost_b:
+		return effective_cost_a < effective_cost_b
+	if effective_cost_a != effective_cost_b:
+		return effective_cost_a > effective_cost_b
 
 	var bias_a: int = _unit_sort_bias(unit_a.id, player_seed, round_number)
 	var bias_b: int = _unit_sort_bias(unit_b.id, player_seed, round_number)
@@ -1311,7 +1890,7 @@ func _choose_snapshot_coord(class_type: int, occupied_coords: Array[Vector2i], s
 			if not occupied_coords.has(coord):
 				return coord
 
-	for row in range(BattleConfig.BOARD_HEIGHT - BattleConfig.PLAYER_ROWS, BattleConfig.BOARD_HEIGHT):
+	for row in range(BattleConfigScript.BOARD_HEIGHT - BattleConfigScript.PLAYER_ROWS, BattleConfigScript.BOARD_HEIGHT):
 		for column in rotated_columns:
 			var fallback_coord := Vector2i(column, row)
 			if not occupied_coords.has(fallback_coord):
@@ -1320,8 +1899,8 @@ func _choose_snapshot_coord(class_type: int, occupied_coords: Array[Vector2i], s
 	return Vector2i(-1, -1)
 
 func _preferred_rows_for_class(class_type: int) -> Array[int]:
-	var frontline_row: int = BattleConfig.BOARD_HEIGHT - BattleConfig.PLAYER_ROWS
-	var backline_row: int = BattleConfig.BOARD_HEIGHT - 1
+	var frontline_row: int = BattleConfigScript.BOARD_HEIGHT - BattleConfigScript.PLAYER_ROWS
+	var backline_row: int = BattleConfigScript.BOARD_HEIGHT - 1
 	if class_type == GameEnums.ClassType.TANK:
 		return [frontline_row, backline_row]
 	if class_type == GameEnums.ClassType.SUPPORT or class_type == GameEnums.ClassType.SNIPER:
@@ -1340,7 +1919,7 @@ func _rotated_columns(seed: int) -> Array[int]:
 	return rotated
 
 func _is_valid_snapshot_coord(coord: Vector2i) -> bool:
-	return coord.x >= 0 and coord.x < BattleConfig.BOARD_WIDTH and coord.y >= 0 and coord.y < BattleConfig.BOARD_HEIGHT
+	return coord.x >= 0 and coord.x < BattleConfigScript.BOARD_WIDTH and coord.y >= 0 and coord.y < BattleConfigScript.BOARD_HEIGHT
 
 func _estimate_unit_power(unit_data: UnitData, is_master: bool, player_seed: int, round_number: int) -> int:
 	if unit_data == null:
@@ -1354,7 +1933,7 @@ func _estimate_unit_power(unit_data: UnitData, is_master: bool, player_seed: int
 	power += unit_data.magic_defense * 4
 	power += unit_data.attack_range * 3
 	power += int(round(unit_data.crit_chance * 100.0))
-	power += unit_data.cost * 12
+	power += unit_data.get_effective_cost() * 12
 	power += int(round(float(unit_data.mana_gain_on_attack + unit_data.mana_gain_on_hit) * 0.5))
 	if unit_data.skill_data != null or unit_data.master_skill_data != null:
 		power += 20
@@ -1395,6 +1974,7 @@ func _resolve_background_match(
 	var sim_units: Array[Dictionary] = _build_background_sim_units(snapshot_a)
 	var acting_team: int = GameEnums.TeamSide.PLAYER if ((player_a.slot_index + player_b.slot_index + round_number) % 2 == 0) else GameEnums.TeamSide.ENEMY
 	var actions_taken: int = 0
+	var reached_action_cap: bool = false
 
 	while actions_taken < BACKGROUND_COMBAT_MAX_ACTIONS:
 		if not _background_team_alive(sim_units, GameEnums.TeamSide.PLAYER):
@@ -1419,6 +1999,12 @@ func _resolve_background_match(
 
 		acting_team = _opposite_team(acting_team)
 
+	reached_action_cap = (
+		actions_taken >= BACKGROUND_COMBAT_MAX_ACTIONS
+		and _background_team_alive(sim_units, GameEnums.TeamSide.PLAYER)
+		and _background_team_alive(sim_units, GameEnums.TeamSide.ENEMY)
+	)
+
 	var winner_team: int = _background_winner_team(sim_units)
 	var winner_id: String = ""
 	var loser_id: String = ""
@@ -1433,7 +2019,12 @@ func _resolve_background_match(
 		loser_id = player_b.player_id if winner_team == GameEnums.TeamSide.PLAYER else player_a.player_id
 		winner_survivors = _count_background_survivors(sim_units, winner_team)
 		loser_survivors = _count_background_survivors(sim_units, _opposite_team(winner_team))
-		damage = clampi(maxi(1, winner_survivors), 1, 8)
+		damage = BattleConfigScript.calculate_post_combat_damage({
+			"winner_id": winner_id,
+			"loser_id": loser_id,
+		}, round_number, {
+			"survivors": winner_survivors,
+		})
 
 		if winner_team == GameEnums.TeamSide.PLAYER:
 			player_a_result_text = "%s venceu %s em segundo plano e causou %d de dano" % [
@@ -1467,6 +2058,8 @@ func _resolve_background_match(
 		"player_a_result_text": player_a_result_text,
 		"player_b_result_text": player_b_result_text,
 		"result_text": player_a_result_text,
+		"failsafe_triggered": reached_action_cap,
+		"failsafe_reason": "background_action_cap" if reached_action_cap else "",
 		"snapshot_a": _build_snapshot_from_sim_units(player_a, player_b, sim_units, GameEnums.TeamSide.PLAYER, round_number, "RESULTADO", player_a_result_text),
 		"snapshot_b": _build_snapshot_from_sim_units(player_b, player_a, sim_units, GameEnums.TeamSide.ENEMY, round_number, "RESULTADO", player_b_result_text),
 	}
@@ -1498,6 +2091,16 @@ func _build_background_sim_units(snapshot: Dictionary) -> Array[Dictionary]:
 			"crit_chance": float(unit_entry.get("crit_chance", 0.0)),
 			"alive": int(unit_entry.get("current_hp", 0)) > 0,
 			"last_coord": Vector2i(-1, -1),
+			"previous_coord": Vector2i(-1, -1),
+			"last_move_origin": Vector2i(-1, -1),
+			"last_move_destination": Vector2i(-1, -1),
+			"last_move_type": "",
+			"last_target_key": "",
+			"previous_target_key": "",
+			"bounce_counter": 0,
+			"retarget_cooldown_turns": 0,
+			"blocked_target_key": "",
+			"blocked_target_turns": 0,
 			"skip_turns_remaining": 0,
 			"initiative_bonus": 0,
 		})
@@ -1574,8 +2177,8 @@ func _build_snapshot_from_sim_units(
 		"round_number": round_number,
 		"phase": phase_name,
 		"life": viewer_state.current_life if viewer_state != null else 0,
-		"gold": BattleConfig.STARTING_GOLD + ((round_number - 1) * BattleConfig.GOLD_PER_ROUND),
-		"gold_budget": BattleConfig.STARTING_GOLD + ((round_number - 1) * BattleConfig.GOLD_PER_ROUND),
+		"gold": viewer_state.current_gold if viewer_state != null else 0,
+		"gold_budget": viewer_state.current_gold if viewer_state != null else 0,
 		"units": units,
 		"unit_count": units.size(),
 		"non_master_count": non_master_count,
@@ -1594,17 +2197,55 @@ func _build_snapshot_from_sim_units(
 		"result_text": result_text,
 	}
 
-func _background_take_action(unit_entry: Dictionary, sim_units: Array[Dictionary]) -> void:
+func _background_take_action(unit_entry: Dictionary, sim_units: Array[Dictionary], log_context: String = "") -> String:
 	if int(unit_entry.get("skip_turns_remaining", 0)) > 0:
 		unit_entry["skip_turns_remaining"] = maxi(0, int(unit_entry.get("skip_turns_remaining", 0)) - 1)
-		return
+		_background_advance_navigation_cooldowns(unit_entry)
+		return "skip"
 	var target: Dictionary = _find_background_target(unit_entry, sim_units)
 	if target.is_empty():
-		return
+		_background_advance_navigation_cooldowns(unit_entry)
+		return "wait"
+	var target_key: String = _background_unit_key(target)
+	if target_key != str(unit_entry.get("last_target_key", "")):
+		unit_entry["previous_target_key"] = str(unit_entry.get("last_target_key", ""))
+		unit_entry["last_target_key"] = target_key
 	if _background_in_range(unit_entry, target):
+		_background_clear_blocked_target(unit_entry)
+		unit_entry["bounce_counter"] = maxi(0, int(unit_entry.get("bounce_counter", 0)) - 1)
 		_background_attack(unit_entry, target)
-		return
-	_background_move(unit_entry, target, sim_units)
+		_background_advance_navigation_cooldowns(unit_entry)
+		return "attack"
+	if _background_move(unit_entry, target, sim_units):
+		_background_clear_blocked_target(unit_entry)
+		_background_advance_navigation_cooldowns(unit_entry)
+		return "move"
+
+	var alternate_target: Dictionary = _find_background_alternate_target(unit_entry, sim_units, target)
+	if not alternate_target.is_empty():
+		target_key = _background_unit_key(alternate_target)
+		unit_entry["previous_target_key"] = str(unit_entry.get("last_target_key", ""))
+		unit_entry["last_target_key"] = target_key
+		if _background_in_range(unit_entry, alternate_target):
+			_background_clear_blocked_target(unit_entry)
+			unit_entry["bounce_counter"] = maxi(0, int(unit_entry.get("bounce_counter", 0)) - 1)
+			_background_attack(unit_entry, alternate_target)
+			_background_advance_navigation_cooldowns(unit_entry)
+			return "attack"
+		if _background_move(unit_entry, alternate_target, sim_units):
+			_background_clear_blocked_target(unit_entry)
+			_background_advance_navigation_cooldowns(unit_entry)
+			return "move"
+
+	_background_remember_blocked_target(unit_entry, target_key)
+	if _background_has_loop_pressure(unit_entry) and not log_context.is_empty():
+		print("ANTI_LOOP [%s]: %s travou em %s e aguardara retarget" % [
+			log_context,
+			str(unit_entry.get("display_name", "Unidade")),
+			target_key,
+		])
+	_background_advance_navigation_cooldowns(unit_entry)
+	return "stuck"
 
 func _background_team_turn_order(sim_units: Array[Dictionary], team_side: int) -> Array[Dictionary]:
 	var turn_order: Array[Dictionary] = []
@@ -1656,12 +2297,56 @@ func _find_background_target(unit_entry: Dictionary, sim_units: Array[Dictionary
 		score += int(candidate.get("current_hp", 0)) * 4
 		score += int(candidate.get("physical_defense", 0)) * 6
 		score += int(candidate.get("magic_defense", 0)) * 4
+		score += _background_target_penalty(unit_entry, _background_unit_key(candidate))
 		if bool(candidate.get("is_master", false)):
 			score -= 12
 		if best_target.is_empty() or score < best_score:
 			best_target = candidate
 			best_score = score
 
+	return best_target
+
+func _find_background_alternate_target(unit_entry: Dictionary, sim_units: Array[Dictionary], excluded_target: Dictionary) -> Dictionary:
+	var best_target: Dictionary = {}
+	var best_score: int = 1000000
+	var excluded_key: String = _background_unit_key(excluded_target)
+	for candidate in sim_units:
+		if not bool(candidate.get("alive", false)):
+			continue
+		if int(candidate.get("team_side", GameEnums.TeamSide.PLAYER)) == int(unit_entry.get("team_side", GameEnums.TeamSide.PLAYER)):
+			continue
+		if _background_unit_key(candidate) == excluded_key:
+			continue
+		if not _background_in_range(unit_entry, candidate):
+			var occupied: Dictionary = {}
+			for other_unit in sim_units:
+				if not bool(other_unit.get("alive", false)):
+					continue
+				if other_unit == unit_entry:
+					continue
+				occupied[_coord_key(other_unit.get("coord", Vector2i(-1, -1)))] = true
+			var move_plan: Dictionary = _resolve_background_step(
+				unit_entry,
+				unit_entry.get("coord", Vector2i(-1, -1)),
+				candidate.get("coord", Vector2i(-1, -1)),
+				occupied,
+				_background_bounce_forbidden_coord(unit_entry, _background_unit_key(candidate)),
+				true
+			)
+			if move_plan.get("coord", unit_entry.get("coord", Vector2i(-1, -1))) == unit_entry.get("coord", Vector2i(-1, -1)):
+				continue
+
+		var score: int = _background_distance(
+			unit_entry.get("coord", Vector2i(-1, -1)),
+			candidate.get("coord", Vector2i(-1, -1))
+		) * 100
+		score += int(candidate.get("current_hp", 0)) * 4
+		score += int(candidate.get("physical_defense", 0)) * 6
+		score += int(candidate.get("magic_defense", 0)) * 4
+		score += _background_target_penalty(unit_entry, _background_unit_key(candidate))
+		if best_target.is_empty() or score < best_score:
+			best_target = candidate
+			best_score = score
 	return best_target
 
 func _background_in_range(unit_entry: Dictionary, target: Dictionary) -> bool:
@@ -1684,7 +2369,7 @@ func _background_attack(attacker: Dictionary, target: Dictionary) -> void:
 	target["current_hp"] = next_hp
 	target["alive"] = next_hp > 0
 
-func _background_move(unit_entry: Dictionary, target: Dictionary, sim_units: Array[Dictionary]) -> void:
+func _background_move(unit_entry: Dictionary, target: Dictionary, sim_units: Array[Dictionary]) -> bool:
 	var current_coord: Vector2i = unit_entry.get("coord", Vector2i(-1, -1))
 	var target_coord: Vector2i = target.get("coord", Vector2i(-1, -1))
 	var occupied: Dictionary = {}
@@ -1695,18 +2380,45 @@ func _background_move(unit_entry: Dictionary, target: Dictionary, sim_units: Arr
 			continue
 		occupied[_coord_key(other_unit.get("coord", Vector2i(-1, -1)))] = true
 
-	var next_coord: Vector2i = _resolve_background_step(unit_entry, current_coord, target_coord, occupied)
+	var target_key: String = _background_unit_key(target)
+	var move_plan: Dictionary = _resolve_background_step(
+		unit_entry,
+		current_coord,
+		target_coord,
+		occupied,
+		_background_bounce_forbidden_coord(unit_entry, target_key),
+		_background_has_loop_pressure(unit_entry)
+	)
+	var next_coord: Vector2i = move_plan.get("coord", current_coord)
 	if next_coord == current_coord:
-		return
+		return false
+	var bounced_back: bool = (
+		str(unit_entry.get("last_target_key", "")) == target_key
+		and unit_entry.get("last_move_origin", Vector2i(-1, -1)) == next_coord
+		and unit_entry.get("last_move_destination", Vector2i(-1, -1)) == current_coord
+	)
+	unit_entry["previous_coord"] = unit_entry.get("last_coord", Vector2i(-1, -1))
 	unit_entry["last_coord"] = current_coord
+	unit_entry["last_move_origin"] = current_coord
+	unit_entry["last_move_destination"] = next_coord
+	unit_entry["last_move_type"] = str(move_plan.get("move_type", "advance"))
+	unit_entry["last_target_key"] = target_key
+	if bounced_back:
+		unit_entry["bounce_counter"] = int(unit_entry.get("bounce_counter", 0)) + 1
+		unit_entry["retarget_cooldown_turns"] = maxi(int(unit_entry.get("retarget_cooldown_turns", 0)), BACKGROUND_RETARGET_COOLDOWN_TURNS)
+	else:
+		unit_entry["bounce_counter"] = maxi(0, int(unit_entry.get("bounce_counter", 0)) - 1)
 	unit_entry["coord"] = next_coord
+	return true
 
 func _resolve_background_step(
 	unit_entry: Dictionary,
 	current_coord: Vector2i,
 	target_coord: Vector2i,
-	occupied: Dictionary
-) -> Vector2i:
+	occupied: Dictionary,
+	forbidden_coord: Vector2i = Vector2i(-1, -1),
+	prefer_wait_on_fallback: bool = false
+) -> Dictionary:
 	var current_distance: int = _background_distance(current_coord, target_coord)
 	var previous_coord: Vector2i = unit_entry.get("last_coord", Vector2i(-1, -1))
 	var best_advance: Vector2i = Vector2i(-1, -1)
@@ -1720,6 +2432,8 @@ func _resolve_background_step(
 		if not _is_valid_snapshot_coord(candidate):
 			continue
 		if occupied.has(_coord_key(candidate)):
+			continue
+		if forbidden_coord != Vector2i(-1, -1) and candidate == forbidden_coord:
 			continue
 
 		var candidate_distance: int = _background_distance(candidate, target_coord)
@@ -1746,12 +2460,14 @@ func _resolve_background_step(
 				best_fallback = candidate
 
 	if _is_valid_snapshot_coord(best_advance):
-		return best_advance
+		return {"coord": best_advance, "move_type": "advance"}
 	if _is_valid_snapshot_coord(best_side):
-		return best_side
+		return {"coord": best_side, "move_type": "sidestep"}
+	if prefer_wait_on_fallback and _is_valid_snapshot_coord(best_fallback):
+		return {"coord": current_coord, "move_type": "wait"}
 	if _is_valid_snapshot_coord(best_fallback):
-		return best_fallback
-	return current_coord
+		return {"coord": best_fallback, "move_type": "fallback"}
+	return {"coord": current_coord, "move_type": "blocked"}
 
 func _background_adjacent_coords(coord: Vector2i) -> Array[Vector2i]:
 	return [
@@ -1771,6 +2487,73 @@ func _background_move_score(candidate: Vector2i, from_coord: Vector2i, target_co
 		+ maxi(0, backward_progress) * 12
 		+ horizontal_delta * 5
 		- maxi(0, forward_progress)
+	)
+
+func _background_unit_key(unit_entry: Dictionary) -> String:
+	return str(unit_entry.get("unit_id", ""))
+
+func _background_target_penalty(unit_entry: Dictionary, target_key: String) -> int:
+	if target_key.is_empty():
+		return 0
+
+	var penalty: int = 0
+	var blocked_target_key: String = str(unit_entry.get("blocked_target_key", ""))
+	var blocked_target_turns: int = int(unit_entry.get("blocked_target_turns", 0))
+	if blocked_target_key == target_key and blocked_target_turns >= 2:
+		penalty += 240 + ((blocked_target_turns - 2) * 60)
+
+	var last_target_key: String = str(unit_entry.get("last_target_key", ""))
+	if int(unit_entry.get("retarget_cooldown_turns", 0)) > 0 and last_target_key == target_key:
+		penalty += 320
+	if str(unit_entry.get("previous_target_key", "")) == target_key:
+		penalty += 90
+	if int(unit_entry.get("bounce_counter", 0)) >= BACKGROUND_BOUNCE_THRESHOLD and last_target_key == target_key:
+		penalty += 180
+	return penalty
+
+func _background_bounce_forbidden_coord(unit_entry: Dictionary, target_key: String) -> Vector2i:
+	if target_key.is_empty():
+		return Vector2i(-1, -1)
+	if str(unit_entry.get("last_target_key", "")) != target_key:
+		return Vector2i(-1, -1)
+	if unit_entry.get("coord", Vector2i(-1, -1)) != unit_entry.get("last_move_destination", Vector2i(-1, -1)):
+		return Vector2i(-1, -1)
+	if int(unit_entry.get("bounce_counter", 0)) >= BACKGROUND_BOUNCE_THRESHOLD:
+		var previous_coord: Vector2i = unit_entry.get("previous_coord", Vector2i(-1, -1))
+		if previous_coord != Vector2i(-1, -1):
+			return previous_coord
+	var move_type: String = str(unit_entry.get("last_move_type", ""))
+	if move_type != "sidestep" and move_type != "fallback":
+		return Vector2i(-1, -1)
+	return unit_entry.get("last_move_origin", Vector2i(-1, -1))
+
+func _background_remember_blocked_target(unit_entry: Dictionary, target_key: String) -> void:
+	if target_key.is_empty():
+		_background_clear_blocked_target(unit_entry)
+		return
+	if str(unit_entry.get("blocked_target_key", "")) == target_key:
+		unit_entry["blocked_target_turns"] = int(unit_entry.get("blocked_target_turns", 0)) + 1
+	else:
+		unit_entry["blocked_target_key"] = target_key
+		unit_entry["blocked_target_turns"] = 1
+	if int(unit_entry.get("blocked_target_turns", 0)) >= 2:
+		unit_entry["retarget_cooldown_turns"] = maxi(
+			int(unit_entry.get("retarget_cooldown_turns", 0)),
+			BACKGROUND_RETARGET_COOLDOWN_TURNS
+		)
+
+func _background_clear_blocked_target(unit_entry: Dictionary) -> void:
+	unit_entry["blocked_target_key"] = ""
+	unit_entry["blocked_target_turns"] = 0
+
+func _background_advance_navigation_cooldowns(unit_entry: Dictionary) -> void:
+	if int(unit_entry.get("retarget_cooldown_turns", 0)) > 0:
+		unit_entry["retarget_cooldown_turns"] = int(unit_entry.get("retarget_cooldown_turns", 0)) - 1
+
+func _background_has_loop_pressure(unit_entry: Dictionary) -> bool:
+	return (
+		int(unit_entry.get("bounce_counter", 0)) >= BACKGROUND_BOUNCE_THRESHOLD
+		or int(unit_entry.get("blocked_target_turns", 0)) >= 2
 	)
 
 func _background_team_alive(sim_units: Array[Dictionary], team_side: int) -> bool:
@@ -1799,11 +2582,26 @@ func _background_winner_team(sim_units: Array[Dictionary]) -> int:
 	if enemy_alive and not player_alive:
 		return GameEnums.TeamSide.ENEMY
 
-	var player_score: int = _background_team_score(sim_units, GameEnums.TeamSide.PLAYER)
-	var enemy_score: int = _background_team_score(sim_units, GameEnums.TeamSide.ENEMY)
-	if player_score == enemy_score:
+	var player_survivors: int = _count_background_survivors(sim_units, GameEnums.TeamSide.PLAYER)
+	var enemy_survivors: int = _count_background_survivors(sim_units, GameEnums.TeamSide.ENEMY)
+	if player_survivors != enemy_survivors:
+		return GameEnums.TeamSide.PLAYER if player_survivors > enemy_survivors else GameEnums.TeamSide.ENEMY
+
+	var player_hp_total: int = _background_team_hp_total(sim_units, GameEnums.TeamSide.PLAYER)
+	var enemy_hp_total: int = _background_team_hp_total(sim_units, GameEnums.TeamSide.ENEMY)
+	if player_hp_total == enemy_hp_total:
 		return -1
-	return GameEnums.TeamSide.PLAYER if player_score > enemy_score else GameEnums.TeamSide.ENEMY
+	return GameEnums.TeamSide.PLAYER if player_hp_total > enemy_hp_total else GameEnums.TeamSide.ENEMY
+
+func _background_team_hp_total(sim_units: Array[Dictionary], team_side: int) -> int:
+	var total_hp: int = 0
+	for unit_entry in sim_units:
+		if not bool(unit_entry.get("alive", false)):
+			continue
+		if int(unit_entry.get("team_side", GameEnums.TeamSide.PLAYER)) != team_side:
+			continue
+		total_hp += int(unit_entry.get("current_hp", 0))
+	return total_hp
 
 func _background_team_score(sim_units: Array[Dictionary], team_side: int) -> int:
 	var score: int = 0
@@ -1842,7 +2640,7 @@ func _coord_key(coord: Vector2i) -> String:
 	return "%d:%d" % [coord.x, coord.y]
 
 func _mirror_coord_for_opponent_view(coord: Vector2i) -> Vector2i:
-	return Vector2i(coord.x, BattleConfig.BOARD_HEIGHT - 1 - coord.y)
+	return Vector2i(coord.x, BattleConfigScript.BOARD_HEIGHT - 1 - coord.y)
 
 func _opposite_team(team_side: int) -> int:
 	return GameEnums.TeamSide.ENEMY if team_side == GameEnums.TeamSide.PLAYER else GameEnums.TeamSide.PLAYER
@@ -1920,6 +2718,16 @@ func _estimate_card_pick_score(card_data: CardData, player_seed: int, round_numb
 			score += 26
 		GameEnums.SupportCardEffectType.OPENING_REPOSITION:
 			score += 18
+		GameEnums.SupportCardEffectType.OPENING_ACTION_SLOW_FIELD:
+			score += 20
+		GameEnums.SupportCardEffectType.PERIODIC_RANDOM_MAGIC_FIELD:
+			score += 22
+		GameEnums.SupportCardEffectType.CONDITIONAL_SUMMON_ON_FIRST_ALLY_DEATH:
+			score += 18
+		GameEnums.SupportCardEffectType.UNIT_MANA_REGEN_BUFF:
+			score += 20
+		GameEnums.SupportCardEffectType.UNIT_LIFESTEAL_GIFT:
+			score += 20
 		_:
 			score += 10
 
@@ -1954,6 +2762,16 @@ func _estimate_owned_cards_power_bonus(card_paths: Array[String]) -> int:
 				bonus += 18
 			GameEnums.SupportCardEffectType.OPENING_REPOSITION:
 				bonus += 10
+			GameEnums.SupportCardEffectType.OPENING_ACTION_SLOW_FIELD:
+				bonus += 14
+			GameEnums.SupportCardEffectType.PERIODIC_RANDOM_MAGIC_FIELD:
+				bonus += 16
+			GameEnums.SupportCardEffectType.CONDITIONAL_SUMMON_ON_FIRST_ALLY_DEATH:
+				bonus += 12
+			GameEnums.SupportCardEffectType.UNIT_MANA_REGEN_BUFF:
+				bonus += 14
+			GameEnums.SupportCardEffectType.UNIT_LIFESTEAL_GIFT:
+				bonus += 14
 	return bonus
 
 func _card_names_from_paths(card_paths: Array[String]) -> Array[String]:

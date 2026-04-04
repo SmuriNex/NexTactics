@@ -6,7 +6,7 @@
 script = ExtResource("1_deck_data")
 id = "mordos"
 display_name = "Deck do Necromante"
-description = "Deck de mortos-vivos focado em invocacao, mana por mortes e controle gradual da mesa."
+description = "Deck de mortos-vivos focado em almas, invocacao escalavel e desgaste progressivo da mesa."
 master_data_path = "res://data/units/necromancer/necromancer_master.tres"
 unit_pool_paths = PackedStringArray("res://data/units/necromancer/iron_crypt_guard.tres", "res://data/units/necromancer/corrupted_rune_squire.tres", "res://data/units/necromancer/hungry_ghoul.tres", "res://data/units/necromancer/fallen_knight.tres", "res://data/units/necromancer/bone_kamikaze.tres", "res://data/units/necromancer/spectral_elf_blade.tres", "res://data/units/necromancer/mourning_fairy.tres", "res://data/units/necromancer/curse_weaver.tres", "res://data/units/necromancer/bone_oracle.tres", "res://data/units/necromancer/requiem_singer.tres", "res://data/units/necromancer/tomb_raider.tres", "res://data/units/necromancer/shadow_cultist.tres")
 card_pool_paths = PackedStringArray("res://data/cards/necromancer/book_of_chaos.tres", "res://data/cards/necromancer/cloak_of_darkness.tres", "res://data/cards/necromancer/blinding_mist.tres", "res://data/cards/necromancer/blood_pact.tres", "res://data/cards/necromancer/bone_prison.tres")

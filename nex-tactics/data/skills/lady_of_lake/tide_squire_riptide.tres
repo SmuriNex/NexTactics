@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="SkillData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_data.gd" id="1_skill_data"]
+
+[resource]
+script = ExtResource("1_skill_data")
+id = "tide_squire_riptide"
+display_name = "Ressaca"
+effect_type = 31
+mana_cost = 65
+cooldown = 0.0
+range = 1
+damage_amount = 1
+physical_power_multiplier = 0.7
+turn_skip_count = 1
+knockback_distance = 1
+description = "Golpe de marretada que empurra inimigos adjacentes e interrompe o ritmo deles."

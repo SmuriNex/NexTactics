@@ -5,9 +5,9 @@
 [resource]
 script = ExtResource("1_card_data")
 id = "book_of_chaos"
-display_name = "Book of Chaos"
+display_name = "Livro do Caos"
 card_type = 2
 support_effect_type = 2
 magic_attack_multiplier = 1.4
 effect_duration_turns = 1
-description = "Equip support. The target gains +40% magic attack for this round."
+description = "Item amaldiçoado. A unidade alvo recebe +40% de ataque magico durante a rodada."

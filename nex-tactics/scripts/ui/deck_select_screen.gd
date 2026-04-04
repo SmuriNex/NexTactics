@@ -3,6 +3,7 @@ class_name DeckSelectScreen
 
 const MORDOS_ACCENT := Color(0.43, 0.73, 0.47, 1.0)
 const THRAX_ACCENT := Color(0.88, 0.68, 0.28, 1.0)
+const LADY_OF_LAKE_ACCENT := Color(0.35, 0.78, 0.93, 1.0)
 const DEFAULT_ACCENT := Color(0.58, 0.66, 0.86, 1.0)
 
 @onready var title_label: Label = $MarginContainer/CenterContainer/MainColumn/TitleLabel
@@ -102,6 +103,8 @@ func _accent_for_deck(deck_id: String) -> Color:
 			return MORDOS_ACCENT
 		GameData.DECK_ID_THRAX:
 			return THRAX_ACCENT
+		GameData.DECK_ID_LADY_OF_LAKE:
+			return LADY_OF_LAKE_ACCENT
 		_:
 			return DEFAULT_ACCENT
 
@@ -129,7 +132,13 @@ func _update_grid_columns() -> void:
 	if deck_grid == null:
 		return
 	var viewport_width: float = get_viewport_rect().size.x
-	deck_grid.columns = 1 if viewport_width < 920.0 else 2
+	var deck_count: int = maxi(1, deck_grid.get_child_count())
+	if viewport_width < 920.0:
+		deck_grid.columns = 1
+	elif viewport_width < 1380.0 or deck_count <= 2:
+		deck_grid.columns = 2
+	else:
+		deck_grid.columns = mini(3, deck_count)
 
 func _on_deck_selected(deck_id: String) -> void:
 	GameData.set_selected_deck(deck_id)

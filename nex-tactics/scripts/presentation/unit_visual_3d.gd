@@ -28,6 +28,7 @@ var base_top_color: Color = MASTER_COLOR
 var base_detail_color: Color = SUPPORT_DETAIL_COLOR
 var is_selected: bool = false
 var death_started: bool = false
+var display_team_side_override: int = -1
 
 func setup(p_state: BattleUnitState, p_board_presentation: BoardPresentation3D) -> UnitVisual3D:
 	state = p_state
@@ -36,6 +37,10 @@ func setup(p_state: BattleUnitState, p_board_presentation: BoardPresentation3D) 
 	refresh_from_state()
 	move_to_coord(state.coord, false)
 	return self
+
+func set_display_team_side_override(team_side: int = -1) -> void:
+	display_team_side_override = team_side
+	refresh_from_state()
 
 func move_to_coord(coord: Vector2i, animate: bool = true) -> void:
 	if board_presentation == null:
@@ -207,11 +212,19 @@ func _body_dimensions() -> Dictionary:
 	return {"radius": 0.31, "height": 0.82}
 
 func _body_color() -> Color:
+	var team_side: int = _effective_team_side()
 	if state != null and state.is_master:
-		return MASTER_COLOR if state.team_side == GameEnums.TeamSide.PLAYER else ENEMY_COLOR.darkened(0.08)
-	if state != null and state.team_side == GameEnums.TeamSide.ENEMY:
+		return MASTER_COLOR if team_side == GameEnums.TeamSide.PLAYER else ENEMY_COLOR.darkened(0.08)
+	if team_side == GameEnums.TeamSide.ENEMY:
 		return ENEMY_COLOR
 	return PLAYER_COLOR
+
+func _effective_team_side() -> int:
+	if display_team_side_override >= 0:
+		return display_team_side_override
+	if state != null:
+		return state.team_side
+	return GameEnums.TeamSide.PLAYER
 
 func _apply_material_colors(body_color: Color, top_color: Color, detail_color: Color) -> void:
 	if body_material != null:

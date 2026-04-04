@@ -1,0 +1,26 @@
+[gd_resource type="Resource" script_class="UnitData" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/unit_data.gd" id="1_unit_data"]
+[ext_resource type="Resource" path="res://data/skills/lady_of_lake/current_ondine_minor_tsunami.tres" id="2_skill_data"]
+
+[resource]
+script = ExtResource("1_unit_data")
+id = "current_ondine"
+display_name = "Ondina da Correnteza"
+race = 3
+class_type = 0
+class_label = "Atacante"
+class_short_label = "ATQ"
+cost = 4
+max_hp = 17
+physical_attack = 1
+magic_attack = 8
+physical_defense = 3
+magic_defense = 5
+attack_range = 3
+crit_chance = 0.05
+mana_max = 70
+mana_gain_on_attack = 14
+mana_gain_on_hit = 8
+skill_data = ExtResource("2_skill_data")
+description = "Atacante magica que desgasta grupos, limpa buffs e mantem a pressao de controle do deck."
