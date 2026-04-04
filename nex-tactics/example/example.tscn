@@ -1,0 +1,63 @@
+[gd_scene load_steps=3 format=3 uid="uid://soopr2v4ywxe"]
+
+[ext_resource type="Script" path="res://example/example.gd" id="1_efwug"]
+[ext_resource type="Texture2D" uid="uid://tgoufab05dru" path="res://images/Add.svg" id="2_7cmod"]
+
+[node name="Test" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_efwug")
+
+[node name="Scroll" type="ScrollContainer" parent="."]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -314.0
+offset_top = -193.0
+offset_right = 314.0
+offset_bottom = 193.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="SlotsStack" type="VBoxContainer" parent="Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="HBoxContainer" type="HBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -387.0
+offset_top = 201.0
+offset_right = 305.0
+offset_bottom = 241.0
+grow_horizontal = 2
+grow_vertical = 2
+alignment = 2
+
+[node name="Label" type="Label" parent="HBoxContainer"]
+layout_mode = 2
+text = "New Game Name:"
+
+[node name="NewGameName" type="TextEdit" parent="HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+scroll_fit_content_height = true
+
+[node name="NewGame" type="Button" parent="HBoxContainer"]
+layout_mode = 2
+icon = ExtResource("2_7cmod")
+flat = true
+
+[connection signal="pressed" from="HBoxContainer/NewGame" to="." method="_on_new_game_pressed"]

@@ -1,0 +1,27 @@
+# When you publish a GitHub Release, attach a ready-to-drop-in zip of addons/savestate/
+name: Release Lite ZIP
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  zip-lite:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Zip addons/savestate
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          zip -r "savestate-lite-${TAG}.zip" addons/savestate/
+
+      - name: Upload zip to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          gh release upload "$TAG" "savestate-lite-${TAG}.zip" --clobber

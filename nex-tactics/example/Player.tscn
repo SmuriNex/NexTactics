@@ -1,0 +1,43 @@
+[gd_scene load_steps=6 format=3 uid="uid://bkejndsxx5kat"]
+
+[ext_resource type="Script" path="res://example/player.gd" id="1_b2lvn"]
+[ext_resource type="Texture2D" uid="uid://sduh5pg5rbab" path="res://images/Player.svg" id="1_w5kk0"]
+[ext_resource type="Script" path="res://addons/saveEngine/scripts/SaveElement2D.gd" id="3_necci"]
+
+[sub_resource type="CapsuleShape2D" id="CapsuleShape2D_1qdt6"]
+radius = 29.0
+height = 74.0
+
+[sub_resource type="CapsuleShape2D" id="CapsuleShape2D_iilbe"]
+radius = 32.0
+height = 78.0
+
+[node name="Player" type="CharacterBody2D"]
+script = ExtResource("1_b2lvn")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("CapsuleShape2D_1qdt6")
+
+[node name="Sprite" type="Sprite2D" parent="."]
+texture = ExtResource("1_w5kk0")
+
+[node name="ContactArea" type="Area2D" parent="."]
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="ContactArea"]
+shape = SubResource("CapsuleShape2D_iilbe")
+
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
+
+[node name="HpLabel" type="Label" parent="CanvasLayer"]
+offset_left = 13.0
+offset_top = 14.0
+offset_right = 53.0
+offset_bottom = 37.0
+theme_override_font_sizes/font_size = 52
+text = "100"
+
+[node name="SaveElement2D" type="Node" parent="."]
+script = ExtResource("3_necci")
+SaveProperties = Array[String](["Hp"])
+
+[connection signal="body_entered" from="ContactArea" to="." method="_on_contact_area_body_entered"]

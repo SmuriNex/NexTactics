@@ -1,0 +1,79 @@
+[gd_scene load_steps=8 format=3 uid="uid://gl11optf4etu"]
+
+[ext_resource type="PackedScene" uid="uid://bkejndsxx5kat" path="res://example/Player.tscn" id="1_jpn4t"]
+[ext_resource type="Script" path="res://example/game.gd" id="1_oyjxt"]
+[ext_resource type="Texture2D" uid="uid://sduh5pg5rbab" path="res://images/Player.svg" id="2_oydj2"]
+[ext_resource type="Script" path="res://addons/saveEngine/scripts/SaveAgent.gd" id="3_sq3qb"]
+
+[sub_resource type="QuadMesh" id="QuadMesh_2hhh8"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_3dfmn"]
+size = Vector2(1.00043, 0.983957)
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_5bbrv"]
+size = Vector2(100, 110)
+
+[node name="Game" type="Node2D"]
+script = ExtResource("1_oyjxt")
+
+[node name="Floor" type="StaticBody2D" parent="."]
+position = Vector2(580, 600)
+
+[node name="MeshInstance2D" type="MeshInstance2D" parent="Floor"]
+position = Vector2(-3, 0)
+scale = Vector2(1151.5, 93.5)
+mesh = SubResource("QuadMesh_2hhh8")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Floor"]
+position = Vector2(-3, 0)
+scale = Vector2(1151.5, 93.5)
+shape = SubResource("RectangleShape2D_3dfmn")
+
+[node name="Player" parent="." instance=ExtResource("1_jpn4t")]
+position = Vector2(223, 425)
+
+[node name="Enemy" type="StaticBody2D" parent="." groups=["enemy"]]
+position = Vector2(1096, 502)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Enemy"]
+position = Vector2(4, -5)
+shape = SubResource("RectangleShape2D_5bbrv")
+
+[node name="Sprite2D" type="Sprite2D" parent="Enemy"]
+modulate = Color(1, 0, 0, 1)
+scale = Vector2(1.48761, 1.58366)
+texture = ExtResource("2_oydj2")
+
+[node name="Enemy2" type="StaticBody2D" parent="." groups=["enemy"]]
+position = Vector2(48, 502)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Enemy2"]
+position = Vector2(4, -5)
+shape = SubResource("RectangleShape2D_5bbrv")
+
+[node name="Sprite2D" type="Sprite2D" parent="Enemy2"]
+modulate = Color(1, 0, 0, 1)
+scale = Vector2(-1.488, 1.584)
+texture = ExtResource("2_oydj2")
+
+[node name="SaveAgent" type="Node" parent="."]
+script = ExtResource("3_sq3qb")
+AutoSavePeriod = 30
+
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
+
+[node name="SavingLabel" type="Label" parent="CanvasLayer"]
+visible = false
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -158.0
+offset_top = 19.0
+offset_right = -31.0
+offset_bottom = 64.0
+grow_horizontal = 0
+theme_override_font_sizes/font_size = 32
+text = "Saving..."
+
+[connection signal="FinishAutoSaving" from="SaveAgent" to="." method="_on_save_agent_finish_auto_saving"]
+[connection signal="StartAutoSaving" from="SaveAgent" to="." method="_on_save_agent_start_auto_saving"]
