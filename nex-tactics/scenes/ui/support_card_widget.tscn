@@ -1,0 +1,128 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/support_card_widget.gd" id="1_support_card_widget"]
+
+[node name="SupportCardWidget" type="Control"]
+custom_minimum_size = Vector2(270, 332)
+mouse_filter = 0
+script = ExtResource("1_support_card_widget")
+
+[node name="CardPanel" type="PanelContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="CardPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 10
+
+[node name="VBoxContainer" type="VBoxContainer" parent="CardPanel/MarginContainer"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="AccentBar" type="ColorRect" parent="CardPanel/MarginContainer/VBoxContainer"]
+custom_minimum_size = Vector2(0, 6)
+layout_mode = 2
+color = Color(0.5, 0.5, 0.58, 1)
+
+[node name="HeaderRow" type="HBoxContainer" parent="CardPanel/MarginContainer/VBoxContainer"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="HeaderTextVBox" type="VBoxContainer" parent="CardPanel/MarginContainer/VBoxContainer/HeaderRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 2
+
+[node name="TitleLabel" type="Label" parent="CardPanel/MarginContainer/VBoxContainer/HeaderRow/HeaderTextVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 18
+text = "Carta"
+autowrap_mode = 3
+
+[node name="TypeLabel" type="Label" parent="CardPanel/MarginContainer/VBoxContainer/HeaderRow/HeaderTextVBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 11
+text = "SUPORTE"
+autowrap_mode = 3
+
+[node name="CostBadgePanel" type="PanelContainer" parent="CardPanel/MarginContainer/VBoxContainer/HeaderRow"]
+custom_minimum_size = Vector2(58, 34)
+layout_mode = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="CardPanel/MarginContainer/VBoxContainer/HeaderRow/CostBadgePanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 6
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 6
+
+[node name="CostBadgeLabel" type="Label" parent="CardPanel/MarginContainer/VBoxContainer/HeaderRow/CostBadgePanel/MarginContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "FREE"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="TargetLabel" type="Label" parent="CardPanel/MarginContainer/VBoxContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 11
+text = "Unidade aliada"
+autowrap_mode = 3
+
+[node name="ArtPanel" type="PanelContainer" parent="CardPanel/MarginContainer/VBoxContainer"]
+custom_minimum_size = Vector2(0, 108)
+layout_mode = 2
+
+[node name="CenterContainer" type="CenterContainer" parent="CardPanel/MarginContainer/VBoxContainer/ArtPanel"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="ArtVBox" type="VBoxContainer" parent="CardPanel/MarginContainer/VBoxContainer/ArtPanel/CenterContainer"]
+layout_mode = 2
+theme_override_constants/separation = 2
+
+[node name="ArtTitleLabel" type="Label" parent="CardPanel/MarginContainer/VBoxContainer/ArtPanel/CenterContainer/ArtVBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
+text = "SIGIL"
+horizontal_alignment = 1
+
+[node name="ArtCaptionLabel" type="Label" parent="CardPanel/MarginContainer/VBoxContainer/ArtPanel/CenterContainer/ArtVBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Suporte"
+horizontal_alignment = 1
+
+[node name="BodyLabel" type="Label" parent="CardPanel/MarginContainer/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_font_sizes/font_size = 13
+text = "Descricao da carta."
+autowrap_mode = 3
+max_lines_visible = 7
+
+[node name="FooterPanel" type="PanelContainer" parent="CardPanel/MarginContainer/VBoxContainer"]
+layout_mode = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="CardPanel/MarginContainer/VBoxContainer/FooterPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 6
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 6
+
+[node name="FooterLabel" type="Label" parent="CardPanel/MarginContainer/VBoxContainer/FooterPanel/MarginContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 11
+text = "DISPONIVEL"
+horizontal_alignment = 1
+autowrap_mode = 3

@@ -1,12 +1,22 @@
 extends CanvasLayer
 class_name BattleHUD
 
+const SupportCardVisualsScript := preload("res://scripts/ui/support_card_visuals.gd")
+
+# Presentation layer for the playable demo:
+# This HUD serves the main local loop first, while observer, elimination and
+# final-screen overlays remain secondary presentation concerns.
+
 signal player_sidebar_entry_pressed(player_id: String)
 signal return_to_local_board_pressed
 signal card_shop_option_selected(card_path: String)
 signal elimination_watch_requested
 signal elimination_back_requested
 signal play_again_requested
+signal master_promotion_drag_started(screen_pos: Vector2)
+signal master_promotion_drag_moved(screen_pos: Vector2)
+signal master_promotion_drag_released(screen_pos: Vector2)
+signal master_promotion_drag_canceled
 
 
 @onready var round_label: Label = $PanelContainer/MarginContainer/VBoxContainer/RoundLabel
@@ -35,8 +45,9 @@ signal play_again_requested
 @onready var card_shop_overlay: Control = $CardShopOverlay
 @onready var card_shop_title_label: Label = $CardShopOverlay/CenterContainer/ShopPanel/MarginContainer/VBoxContainer/CardShopTitleLabel
 @onready var card_shop_subtitle_label: Label = $CardShopOverlay/CenterContainer/ShopPanel/MarginContainer/VBoxContainer/CardShopSubtitleLabel
-@onready var card_shop_button_a: Button = $CardShopOverlay/CenterContainer/ShopPanel/MarginContainer/VBoxContainer/CardShopOptionsRow/CardShopOptionButtonA
-@onready var card_shop_button_b: Button = $CardShopOverlay/CenterContainer/ShopPanel/MarginContainer/VBoxContainer/CardShopOptionsRow/CardShopOptionButtonB
+@onready var card_shop_card_a: SupportCardWidget = $CardShopOverlay/CenterContainer/ShopPanel/MarginContainer/VBoxContainer/CardShopOptionsRow/CardShopOptionCardA
+@onready var card_shop_card_b: SupportCardWidget = $CardShopOverlay/CenterContainer/ShopPanel/MarginContainer/VBoxContainer/CardShopOptionsRow/CardShopOptionCardB
+@onready var master_promotion_token: MasterPromotionToken = $MasterPromotionToken
 
 var card_shop_option_paths: Array[String] = []
 var elimination_overlay: Control = null
@@ -54,16 +65,22 @@ func _ready() -> void:
 	_ensure_phase8_overlays()
 	if observer_return_button != null:
 		observer_return_button.pressed.connect(_on_observer_return_button_pressed)
-	if card_shop_button_a != null:
-		card_shop_button_a.pressed.connect(_on_card_shop_option_button_pressed.bind(0))
-	if card_shop_button_b != null:
-		card_shop_button_b.pressed.connect(_on_card_shop_option_button_pressed.bind(1))
+	if card_shop_card_a != null:
+		card_shop_card_a.pressed.connect(_on_card_shop_option_pressed.bind(0))
+	if card_shop_card_b != null:
+		card_shop_card_b.pressed.connect(_on_card_shop_option_pressed.bind(1))
+	if master_promotion_token != null:
+		master_promotion_token.drag_started.connect(_on_master_promotion_token_drag_started)
+		master_promotion_token.drag_moved.connect(_on_master_promotion_token_drag_moved)
+		master_promotion_token.drag_released.connect(_on_master_promotion_token_drag_released)
+		master_promotion_token.drag_canceled.connect(_on_master_promotion_token_drag_canceled)
 	clear_unit_info()
 	clear_observer_banner()
 	update_player_sidebar([])
 	hide_card_shop()
 	hide_elimination_screen()
 	hide_final_screen()
+	hide_master_promotion_token()
 
 func update_status(
 	round_number: int,
@@ -71,15 +88,21 @@ func update_status(
 	gold_value: int,
 	last_income_total: int,
 	state_name: String,
-	opponent_name: String
+	opponent_name: String,
+	master_status_text: String = "",
+	progression_feedback_text: String = ""
 ) -> void:
 	round_label.text = "RODADA %d" % round_number
 	player_life_label.text = "Vida jog.    %d" % player_life
+	if not master_status_text.is_empty():
+		player_life_label.text += "\n%s" % master_status_text
 	if last_income_total > 0:
 		gold_label.text = "Ouro         %d (+%d)" % [gold_value, last_income_total]
 	else:
 		gold_label.text = "Ouro         %d" % gold_value
 	state_label.text = "Estado       %s" % state_name
+	if not progression_feedback_text.is_empty():
+		state_label.text += "\n%s" % progression_feedback_text
 	opponent_label.text = "Oponente     %s" % opponent_name
 
 func update_unit_info(unit_state: BattleUnitState) -> void:
@@ -185,6 +208,9 @@ func is_over_hud(global_pos: Vector2) -> bool:
 		return true
 	if card_shop_overlay != null and card_shop_overlay.visible:
 		return true
+	if master_promotion_token != null and master_promotion_token.visible:
+		if master_promotion_token.get_global_rect().has_point(global_pos):
+			return true
 	if status_panel_container.get_global_rect().has_point(global_pos):
 		return true
 	if observer_banner_panel_container != null and observer_banner_panel_container.visible:
@@ -209,14 +235,51 @@ func show_card_shop(round_number: int, option_entries: Array[Dictionary]) -> voi
 	card_shop_option_paths.clear()
 	card_shop_title_label.text = "LOJA DA PARTIDA - RODADA %d" % round_number
 	card_shop_subtitle_label.text = "Escolha 1 carta gratuita. O PREP fica pausado ate voce decidir."
-	_set_card_shop_button(card_shop_button_a, option_entries, 0)
-	_set_card_shop_button(card_shop_button_b, option_entries, 1)
+	_set_card_shop_card(card_shop_card_a, option_entries, 0)
+	_set_card_shop_card(card_shop_card_b, option_entries, 1)
 
 func hide_card_shop() -> void:
 	if card_shop_overlay == null:
 		return
 	card_shop_overlay.visible = false
 	card_shop_option_paths.clear()
+	if card_shop_card_a != null:
+		card_shop_card_a.visible = false
+	if card_shop_card_b != null:
+		card_shop_card_b.visible = false
+
+func set_master_promotion_token_state(
+	is_visible: bool,
+	pending_count: int,
+	interaction_enabled: bool,
+	instruction_text: String
+) -> void:
+	if master_promotion_token == null:
+		return
+	master_promotion_token.set_token_state(
+		is_visible,
+		pending_count,
+		interaction_enabled,
+		instruction_text
+	)
+
+func set_master_promotion_drag_feedback(drop_valid: bool, hover_text: String = "") -> void:
+	if master_promotion_token == null:
+		return
+	master_promotion_token.set_drag_feedback(drop_valid, hover_text)
+
+func cancel_master_promotion_drag() -> void:
+	if master_promotion_token == null:
+		return
+	master_promotion_token.cancel_drag()
+
+func hide_master_promotion_token() -> void:
+	if master_promotion_token == null:
+		return
+	master_promotion_token.hide_token()
+
+func is_master_promotion_drag_active() -> bool:
+	return master_promotion_token != null and master_promotion_token.is_drag_active()
 
 func is_elimination_screen_open() -> bool:
 	return elimination_overlay != null and elimination_overlay.visible
@@ -397,27 +460,38 @@ func update_player_sidebar(entries: Array[Dictionary]) -> void:
 		row_button.pressed.connect(_on_player_sidebar_button_pressed.bind(str(entry.get("player_id", ""))))
 		player_sidebar_list.add_child(row_button)
 
-func _set_card_shop_button(button: Button, option_entries: Array[Dictionary], index: int) -> void:
-	if button == null:
+func _set_card_shop_card(widget: SupportCardWidget, option_entries: Array[Dictionary], index: int) -> void:
+	if widget == null:
 		return
 	if index < 0 or index >= option_entries.size():
-		button.visible = false
+		widget.visible = false
 		return
 
 	var option_entry: Dictionary = option_entries[index]
 	var card_data: CardData = option_entry.get("card_data", null)
 	var card_path: String = str(option_entry.get("card_path", ""))
-	button.visible = true
-	button.disabled = card_data == null or card_path.is_empty()
+	widget.visible = true
 	if card_shop_option_paths.size() <= index:
 		card_shop_option_paths.resize(index + 1)
 	card_shop_option_paths[index] = card_path
 
 	if card_data == null:
-		button.text = "Carta indisponivel"
+		widget.configure(SupportCardVisualsScript.build_view_data(
+			null,
+			"INDISPONIVEL",
+			"unavailable",
+			false
+		))
 		return
 
-	button.text = _format_card_shop_option_text(card_data)
+	var view_data: Dictionary = SupportCardVisualsScript.build_view_data(
+		card_data,
+		"CLIQUE PARA ESCOLHER",
+		"shop",
+		false,
+		"Gratis"
+	)
+	widget.configure(view_data)
 
 func _set_default_section_titles() -> void:
 	primary_section_title_label.text = "VIDA E MANA"
@@ -444,7 +518,7 @@ func _set_info_blocks(
 
 func _build_primary_lines(unit_state: BattleUnitState) -> Array[String]:
 	return [
-		"PV: %d / %d" % [unit_state.current_hp, unit_state.unit_data.max_hp],
+		"PV: %d / %d" % [unit_state.current_hp, unit_state.get_max_hp_value()],
 		"Mana: %d / %d" % [unit_state.current_mana, unit_state.get_mana_max()],
 		"Alcance: %d | Critico: %d%%" % [
 			unit_state.get_attack_range(),
@@ -511,6 +585,8 @@ func _build_tag_lines(unit_state: BattleUnitState) -> Array[String]:
 	var profile_text: String = _translated_unit_profile(unit_state)
 	if not profile_text.is_empty():
 		lines.append("Perfil: %s" % profile_text)
+	if unit_state.has_permanent_stat_bonus():
+		lines.append("Promocao: %s" % unit_state.get_permanent_stat_bonus_text())
 	if unit_state.has_round_stat_bonus():
 		lines.append("Bonus da rodada: %s" % _build_round_bonus_text(unit_state))
 	var status_text: String = _build_status_text(unit_state)
@@ -789,7 +865,7 @@ func _on_player_sidebar_button_pressed(player_id: String) -> void:
 func _on_observer_return_button_pressed() -> void:
 	return_to_local_board_pressed.emit()
 
-func _on_card_shop_option_button_pressed(option_index: int) -> void:
+func _on_card_shop_option_pressed(option_index: int) -> void:
 	if option_index < 0 or option_index >= card_shop_option_paths.size():
 		return
 	var card_path: String = str(card_shop_option_paths[option_index])
@@ -805,6 +881,18 @@ func _on_elimination_back_button_pressed() -> void:
 
 func _on_final_play_again_button_pressed() -> void:
 	play_again_requested.emit()
+
+func _on_master_promotion_token_drag_started(screen_pos: Vector2) -> void:
+	master_promotion_drag_started.emit(screen_pos)
+
+func _on_master_promotion_token_drag_moved(screen_pos: Vector2) -> void:
+	master_promotion_drag_moved.emit(screen_pos)
+
+func _on_master_promotion_token_drag_released(screen_pos: Vector2) -> void:
+	master_promotion_drag_released.emit(screen_pos)
+
+func _on_master_promotion_token_drag_canceled() -> void:
+	master_promotion_drag_canceled.emit()
 
 func _build_tags(unit_state: BattleUnitState) -> Array[String]:
 	var tags: Array[String] = []

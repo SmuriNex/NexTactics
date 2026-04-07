@@ -1,6 +1,7 @@
 extends RefCounted
 class_name MatchPlayerState
 const BattleConfigScript := preload("res://autoload/battle_config.gd")
+const MasterProgressionStateScript := preload("res://scripts/match/master_progression_state.gd")
 
 const GOLD_CAP := 15
 const ROUND_BASE_INCOME := 5
@@ -23,6 +24,7 @@ var banked_gold: int:
 		return bonus_next_round_gold
 	set(value):
 		bonus_next_round_gold = maxi(0, value)
+var master_progression_state: MasterProgressionState = MasterProgressionStateScript.new()
 var experience_value: int = 0
 var player_level: int = 1
 var win_streak: int = 0
@@ -73,8 +75,8 @@ func setup(
 	current_life = BattleConfigScript.GLOBAL_LIFE
 	current_gold = 0
 	bonus_next_round_gold = 0
-	experience_value = 0
-	player_level = 1
+	master_progression_state.reset()
+	_sync_master_progression_fields()
 	win_streak = 0
 	lose_streak = 0
 	streak_value = 0
@@ -224,6 +226,43 @@ func record_round_result(round_number: int, result_text: String, did_win: bool, 
 	if round_history.size() > 12:
 		round_history.remove_at(0)
 
+func apply_master_round_progression(did_win: bool, did_lose: bool, master_survived: bool) -> Dictionary:
+	var result: Dictionary = master_progression_state.apply_round_result(did_win, did_lose, master_survived)
+	_sync_master_progression_fields()
+	return result
+
+func get_field_capacity_total() -> int:
+	return master_progression_state.get_field_capacity_total()
+
+func get_field_unit_limit() -> int:
+	return master_progression_state.get_field_unit_limit()
+
+func has_pending_master_promotion() -> bool:
+	return master_progression_state.has_pending_promotion()
+
+func get_pending_master_promotion_count() -> int:
+	return master_progression_state.get_pending_promotion_count()
+
+func apply_master_promotion_to_unit(unit_id: String, class_type: int, display_name: String = "") -> Dictionary:
+	var result: Dictionary = master_progression_state.apply_unit_promotion(unit_id, class_type, display_name)
+	_sync_master_progression_fields()
+	return result
+
+func get_unit_promotion_bonus(unit_id: String) -> Dictionary:
+	return master_progression_state.get_unit_promotion_bonus(unit_id)
+
+func get_master_status_text() -> String:
+	return master_progression_state.build_master_status_text()
+
+func get_master_feedback_text() -> String:
+	return master_progression_state.build_feedback_text()
+
+func get_master_level() -> int:
+	return player_level
+
+func get_master_xp_total() -> int:
+	return experience_value
+
 func set_owned_card_paths(card_paths: Array[String]) -> void:
 	owned_card_paths = card_paths
 
@@ -260,3 +299,7 @@ func _streak_income_value(streak_count: int) -> int:
 	if streak_count >= 2:
 		return 1
 	return 0
+
+func _sync_master_progression_fields() -> void:
+	experience_value = master_progression_state.xp_total
+	player_level = master_progression_state.level

@@ -1,6 +1,9 @@
 extends CanvasLayer
 class_name DeployBar
 
+const SUPPORT_CARD_WIDGET_SCENE := preload("res://scenes/ui/support_card_widget.tscn")
+const SupportCardVisualsScript := preload("res://scripts/ui/support_card_visuals.gd")
+
 signal deploy_slot_pressed(slot_index: int)
 signal deploy_slot_right_clicked(slot_index: int)
 signal support_slot_pressed(slot_index: int)
@@ -31,10 +34,7 @@ var unit_slot_name_labels: Array[Label] = []
 var unit_slot_cost_labels: Array[Label] = []
 var unit_slot_status_labels: Array[Label] = []
 
-var support_slot_panels: Array[PanelContainer] = []
-var support_slot_name_labels: Array[Label] = []
-var support_slot_cost_labels: Array[Label] = []
-var support_slot_status_labels: Array[Label] = []
+var support_slot_widgets: Array[SupportCardWidget] = []
 
 func update_unit_slots(slot_data: Array[Dictionary], dragging_slot_index: int) -> void:
     _ensure_slot_count(
@@ -60,27 +60,9 @@ func update_unit_slots(slot_data: Array[Dictionary], dragging_slot_index: int) -
         )
 
 func update_support_slots(slot_data: Array[Dictionary], selected_slot_index: int) -> void:
-    _ensure_slot_count(
-        slot_data.size(),
-        support_slots_container,
-        support_slot_panels,
-        support_slot_name_labels,
-        support_slot_cost_labels,
-        support_slot_status_labels,
-        true
-    )
-
+    _ensure_support_slot_count(slot_data.size())
     for i in range(slot_data.size()):
-        _update_slot_visual(
-            i,
-            slot_data[i],
-            selected_slot_index,
-            support_slot_panels,
-            support_slot_name_labels,
-            support_slot_cost_labels,
-            support_slot_status_labels,
-            true
-        )
+        _update_support_slot_visual(i, slot_data[i], selected_slot_index)
 
 func set_sell_zone_feedback(active: bool, valid: bool) -> void:
     if not active:
@@ -105,8 +87,8 @@ func is_over_unit_slot(global_pos: Vector2) -> bool:
     return false
 
 func is_over_support_slot(global_pos: Vector2) -> bool:
-    for panel in support_slot_panels:
-        if panel != null and panel.get_global_rect().has_point(global_pos):
+    for widget in support_slot_widgets:
+        if widget != null and widget.get_global_rect().has_point(global_pos):
             return true
     return false
 
@@ -183,6 +165,21 @@ func _ensure_slot_count(
         slot_cost_labels.append(cost_label)
         slot_status_labels.append(status_label)
 
+func _ensure_support_slot_count(slot_count: int) -> void:
+    while support_slot_widgets.size() > slot_count:
+        var idx := support_slot_widgets.size() - 1
+        support_slot_widgets[idx].queue_free()
+        support_slot_widgets.remove_at(idx)
+
+    while support_slot_widgets.size() < slot_count:
+        var widget := SUPPORT_CARD_WIDGET_SCENE.instantiate() as SupportCardWidget
+        widget.custom_minimum_size = Vector2(136.0, 156.0)
+        widget.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+        widget.pressed.connect(_on_support_slot_widget_pressed.bind(support_slot_widgets.size()))
+        widget.right_clicked.connect(_on_support_slot_widget_right_clicked.bind(support_slot_widgets.size()))
+        support_slots_container.add_child(widget)
+        support_slot_widgets.append(widget)
+
 func _update_slot_visual(
     slot_index: int,
     data: Dictionary,
@@ -230,6 +227,40 @@ func _update_slot_visual(
         slot_status_labels[slot_index].text = "INDISP."
         slot_panels[slot_index].modulate = SUPPORT_SLOT_UNAVAILABLE_COLOR if is_support else UNIT_SLOT_UNAVAILABLE_COLOR
 
+func _update_support_slot_visual(slot_index: int, data: Dictionary, selected_slot_index: int) -> void:
+    if slot_index < 0 or slot_index >= support_slot_widgets.size():
+        return
+
+    var status: String = str(data.get("status", "UNAVAILABLE"))
+    var state_kind: String = "ready"
+    var state_label: String = "DISPONIVEL"
+    var reason_text: String = str(data.get("reason", ""))
+    if status == "USED":
+        state_kind = "used"
+        state_label = "USADA"
+    elif selected_slot_index == slot_index:
+        state_kind = "selected"
+        state_label = "ARMADA"
+    elif status == "READY":
+        state_kind = "ready"
+        state_label = "DISPONIVEL"
+    else:
+        state_kind = "unavailable"
+        state_label = "INDISPONIVEL"
+
+    var compact_hint: String = ""
+    if state_kind == "unavailable" and not reason_text.is_empty():
+        compact_hint = reason_text
+
+    var view_data: Dictionary = SupportCardVisualsScript.build_view_data(
+        data.get("card_data", null) as CardData,
+        state_label,
+        state_kind,
+        true,
+        compact_hint
+    )
+    support_slot_widgets[slot_index].configure(view_data)
+
 func _on_unit_slot_gui_input(event: InputEvent, slot_index: int) -> void:
     if event is InputEventMouseButton:
         var mouse_event := event as InputEventMouseButton
@@ -245,3 +276,9 @@ func _on_support_slot_gui_input(event: InputEvent, slot_index: int) -> void:
             support_slot_pressed.emit(slot_index)
         elif mouse_event.button_index == MOUSE_BUTTON_RIGHT and mouse_event.pressed:
             support_slot_right_clicked.emit(slot_index)
+
+func _on_support_slot_widget_pressed(slot_index: int) -> void:
+    support_slot_pressed.emit(slot_index)
+
+func _on_support_slot_widget_right_clicked(slot_index: int) -> void:
+    support_slot_right_clicked.emit(slot_index)

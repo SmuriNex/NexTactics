@@ -23,4 +23,4 @@ mana_max = 80
 mana_gain_on_attack = 16
 mana_gain_on_hit = 10
 master_skill_data = ExtResource("2_master_skill")
-description = "Mestre de linha de frente que transforma ouro guardado em poder bruto para todo o exercito e ainda puxa o foco inimigo quando ativa seu canto."
+description = "Rei humano de linha de frente que lidera um reino militarista, converte riqueza acumulada em poder para a coroa e impõe a supremacia humana no campo."

@@ -17,6 +17,11 @@ var bonus_physical_attack: int = 0
 var bonus_magic_attack: int = 0
 var bonus_physical_defense: int = 0
 var bonus_magic_defense: int = 0
+var permanent_bonus_hp: int = 0
+var permanent_bonus_physical_attack: int = 0
+var permanent_bonus_magic_attack: int = 0
+var permanent_bonus_physical_defense: int = 0
+var permanent_bonus_magic_defense: int = 0
 var deck_passive_physical_attack: int = 0
 var deck_passive_magic_attack: int = 0
 var deck_passive_physical_defense: int = 0
@@ -99,9 +104,14 @@ func setup_from_unit_data(
 	coord = p_coord
 	home_coord = p_coord if p_home_coord == Vector2i(-1, -1) else p_home_coord
 	is_master = p_is_master
+	permanent_bonus_hp = 0
+	permanent_bonus_physical_attack = 0
+	permanent_bonus_magic_attack = 0
+	permanent_bonus_physical_defense = 0
+	permanent_bonus_magic_defense = 0
 
 	if unit_data != null:
-		current_hp = unit_data.max_hp
+		current_hp = get_max_hp_value()
 		current_mana = 0
 	else:
 		current_hp = 0
@@ -286,12 +296,12 @@ func get_class_magic_attack_bonus() -> int:
 func get_physical_attack_value() -> int:
 	if unit_data == null:
 		return 0
-	return unit_data.physical_attack + get_race_physical_attack_bonus() + get_class_physical_attack_bonus() + synergy_physical_attack + bonus_physical_attack + deck_passive_physical_attack
+	return unit_data.physical_attack + get_race_physical_attack_bonus() + get_class_physical_attack_bonus() + synergy_physical_attack + bonus_physical_attack + permanent_bonus_physical_attack + deck_passive_physical_attack
 
 func get_magic_attack_value() -> int:
 	if unit_data == null:
 		return 0
-	return unit_data.magic_attack + get_race_magic_attack_bonus() + get_class_magic_attack_bonus() + synergy_magic_attack + bonus_magic_attack + deck_passive_magic_attack
+	return unit_data.magic_attack + get_race_magic_attack_bonus() + get_class_magic_attack_bonus() + synergy_magic_attack + bonus_magic_attack + permanent_bonus_magic_attack + deck_passive_magic_attack
 
 func get_attack_value() -> int:
 	return get_physical_attack_value() + get_magic_attack_value()
@@ -323,13 +333,13 @@ func get_class_magic_defense_bonus() -> int:
 func get_physical_defense_value() -> int:
 	if unit_data == null:
 		return 0
-	var raw_value: int = unit_data.physical_defense + get_race_physical_defense_bonus() + get_class_physical_defense_bonus() + synergy_physical_defense + bonus_physical_defense + deck_passive_physical_defense
+	var raw_value: int = unit_data.physical_defense + get_race_physical_defense_bonus() + get_class_physical_defense_bonus() + synergy_physical_defense + bonus_physical_defense + permanent_bonus_physical_defense + deck_passive_physical_defense
 	return maxi(0, int(round(float(raw_value) * physical_defense_multiplier_status)))
 
 func get_magic_defense_value() -> int:
 	if unit_data == null:
 		return 0
-	var raw_value: int = unit_data.magic_defense + get_race_magic_defense_bonus() + get_class_magic_defense_bonus() + synergy_magic_defense + bonus_magic_defense + deck_passive_magic_defense
+	var raw_value: int = unit_data.magic_defense + get_race_magic_defense_bonus() + get_class_magic_defense_bonus() + synergy_magic_defense + bonus_magic_defense + permanent_bonus_magic_defense + deck_passive_magic_defense
 	return maxi(0, int(round(float(raw_value) * magic_defense_multiplier_status)))
 
 func get_defense_value() -> int:
@@ -371,6 +381,11 @@ func get_mana_max() -> int:
 	if unit_data == null:
 		return 0
 	return maxi(1, unit_data.mana_max)
+
+func get_max_hp_value() -> int:
+	if unit_data == null:
+		return 0
+	return maxi(1, unit_data.max_hp + permanent_bonus_hp)
 
 func get_race_mana_bonus() -> int:
 	return 0
@@ -485,7 +500,7 @@ func reset_for_new_round() -> void:
 	if unit_data == null:
 		return
 
-	current_hp = unit_data.max_hp
+	current_hp = get_max_hp_value()
 	current_mana = 0
 	action_charge = 0
 	alive = true
@@ -652,6 +667,44 @@ func add_round_stat_bonus(
 	bonus_magic_attack += p_magic_attack
 	bonus_physical_defense += p_physical_defense
 	bonus_magic_defense += p_magic_defense
+
+func apply_permanent_stat_bonus(
+	p_hp_bonus: int = 0,
+	p_physical_attack: int = 0,
+	p_magic_attack: int = 0,
+	p_physical_defense: int = 0,
+	p_magic_defense: int = 0
+) -> void:
+	permanent_bonus_hp += p_hp_bonus
+	permanent_bonus_physical_attack += p_physical_attack
+	permanent_bonus_magic_attack += p_magic_attack
+	permanent_bonus_physical_defense += p_physical_defense
+	permanent_bonus_magic_defense += p_magic_defense
+	if p_hp_bonus > 0:
+		current_hp = mini(get_max_hp_value(), current_hp + p_hp_bonus)
+
+func has_permanent_stat_bonus() -> bool:
+	return (
+		permanent_bonus_hp != 0
+		or permanent_bonus_physical_attack != 0
+		or permanent_bonus_magic_attack != 0
+		or permanent_bonus_physical_defense != 0
+		or permanent_bonus_magic_defense != 0
+	)
+
+func get_permanent_stat_bonus_text() -> String:
+	var parts: Array[String] = []
+	if permanent_bonus_hp != 0:
+		parts.append("+%d PV" % permanent_bonus_hp)
+	if permanent_bonus_physical_attack != 0:
+		parts.append("+%d ATQ F" % permanent_bonus_physical_attack)
+	if permanent_bonus_magic_attack != 0:
+		parts.append("+%d ATQ M" % permanent_bonus_magic_attack)
+	if permanent_bonus_physical_defense != 0:
+		parts.append("+%d DEF F" % permanent_bonus_physical_defense)
+	if permanent_bonus_magic_defense != 0:
+		parts.append("+%d DEF M" % permanent_bonus_magic_defense)
+	return _join_strings(parts)
 
 func has_round_stat_bonus() -> bool:
 	return (
@@ -1065,7 +1118,7 @@ func heal(amount: int) -> int:
 		return 0
 
 	var before: int = current_hp
-	current_hp = mini(unit_data.max_hp, current_hp + amount)
+	current_hp = mini(get_max_hp_value(), current_hp + amount)
 	return current_hp - before
 
 func take_damage(amount: int) -> int:

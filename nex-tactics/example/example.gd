@@ -13,7 +13,7 @@ func LoadSlots():
 	for child in slots_stack.get_children():
 		child.queue_free()
 	for slot in saveSlots:
-		var slotView = load("res://example/SaveSlot.tscn").instantiate() as SaveSlot
+		var slotView = load("res://example/SaveSlot.tscn").instantiate() as ExampleSaveSlot
 		slotView.saveSlot = slot
 		slotView.Load.connect(LoadGame)
 		slotView.Delete.connect(DeleteSlot)

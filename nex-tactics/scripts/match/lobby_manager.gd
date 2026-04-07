@@ -1,5 +1,14 @@
 extends RefCounted
 class_name LobbyManager
+
+# Structural role:
+# - Internal match-state backend for the local-first demo.
+# - Owns player state, pairings, economy, global damage and ranking.
+# - BattleManager remains the owner of the local playable loop.
+# - Also preserves future-facing systems such as live tables, observer runtime
+#   and multi-table simulation, which should remain supportive instead of
+#   dominating the main demo flow.
+
 const BattleConfigScript := preload("res://autoload/battle_config.gd")
 
 const CENTER_COLUMNS: Array[int] = [3, 2, 4, 1, 5, 0, 6]
@@ -109,6 +118,9 @@ func apply_technical_byes(player_ids: Array[String], round_number: int) -> Array
 		})
 	return bye_entries
 
+# Match-state backend ownership:
+# Applies global consequences after a local or observed battle has already been
+# decided by its caller.
 func apply_post_combat_damage(
 	winner_id: String,
 	loser_id: String,
@@ -766,6 +778,9 @@ func begin_live_tables_battle(round_number: int = -1) -> bool:
 		changed = true
 	return changed
 
+# Future-facing support ownership:
+# Live-table processing exists for observer and online-ready structure, not as
+# the source of truth for the local player's playable combat.
 func update_live_tables(delta: float, observed_player_id: String = "") -> bool:
 	var changed: bool = false
 	for table_id in combat_instances.keys():
@@ -777,6 +792,8 @@ func update_live_tables(delta: float, observed_player_id: String = "") -> bool:
 			changed = true
 	return changed
 
+# Future-facing support ownership:
+# Only forces secondary live tables to conclude so the match backend can settle.
 func force_finish_live_tables(round_number: int = -1) -> Array[Dictionary]:
 	var results: Array[Dictionary] = []
 	for table_id in combat_instances.keys():

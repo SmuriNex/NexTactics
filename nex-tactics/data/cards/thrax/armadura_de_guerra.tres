@@ -10,4 +10,4 @@ card_type = 2
 support_effect_type = 9
 physical_defense_multiplier = 1.4
 effect_duration_turns = 1
-description = "Item. Humanos e Bestas recebem +40% de defesa fisica durante a rodada."
+description = "Item da coroa. Humanos aliados recebem +40% de defesa fisica durante a rodada."

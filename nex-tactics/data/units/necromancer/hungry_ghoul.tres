@@ -7,7 +7,7 @@
 script = ExtResource("1_unit_data")
 id = "hungry_ghoul"
 display_name = "Carnical Faminto"
-race = 4
+race = 2
 class_type = 0
 cost = 2
 class_label = "Atacante"
@@ -23,4 +23,4 @@ mana_max = 60
 mana_gain_on_attack = 12
 mana_gain_on_hit = 10
 skill_data = ExtResource("2_skill_data")
-description = "Bruiser morto-vivo que se sustenta no duelo ao drenar vida com as proprias mordidas."
+description = "Bruiser ogro corrompido que se sustenta no duelo ao drenar vida com investidas brutais e mordidas canibais."

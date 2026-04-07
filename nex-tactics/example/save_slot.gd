@@ -1,5 +1,5 @@
 extends Control
-class_name SaveSlot
+class_name ExampleSaveSlot
 
 signal Load(slot : SaveFile)
 signal Delete(slot : SaveFile)

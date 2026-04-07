@@ -7,7 +7,7 @@
 script = ExtResource("1_unit_data")
 id = "iron_crypt_guard"
 display_name = "Abominacao de Carne"
-race = 4
+race = 2
 class_type = 1
 class_label = "Tanque"
 class_short_label = "TNK"
@@ -23,4 +23,4 @@ mana_max = 70
 mana_gain_on_attack = 10
 mana_gain_on_hit = 12
 skill_data = ExtResource("2_skill_data")
-description = "Tanque morto-vivo de linha de frente que ergue um escudo fisico massivo e pune ataques corpo a corpo."
+description = "Tanque ogro corrompido de linha de frente que ergue um escudo fisico massivo e pune qualquer inimigo que tente atravessar seu corpo monstruoso."

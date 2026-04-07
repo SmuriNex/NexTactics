@@ -1,6 +1,8 @@
 [gd_scene format=3 uid="uid://de3iw8a3rdyf3"]
 
 [ext_resource type="Script" uid="uid://cj5ebuuahfstq" path="res://scripts/ui/battle_hud.gd" id="1_battle_hud"]
+[ext_resource type="PackedScene" path="res://scenes/ui/master_promotion_token.tscn" id="2_master_promotion_token"]
+[ext_resource type="PackedScene" path="res://scenes/ui/support_card_widget.tscn" id="3_support_card_widget"]
 
 [node name="BattleHUD" type="CanvasLayer" unique_id=910400953]
 script = ExtResource("1_battle_hud")
@@ -294,7 +296,7 @@ grow_horizontal = 2
 grow_vertical = 2
 
 [node name="ShopPanel" type="PanelContainer" parent="CardShopOverlay/CenterContainer" unique_id=1035127390]
-custom_minimum_size = Vector2(720, 280)
+custom_minimum_size = Vector2(920, 430)
 layout_mode = 2
 
 [node name="MarginContainer" type="MarginContainer" parent="CardShopOverlay/CenterContainer/ShopPanel" unique_id=752432059]
@@ -324,18 +326,16 @@ autowrap_mode = 3
 [node name="CardShopOptionsRow" type="HBoxContainer" parent="CardShopOverlay/CenterContainer/ShopPanel/MarginContainer/VBoxContainer" unique_id=628089483]
 layout_mode = 2
 size_flags_vertical = 3
-theme_override_constants/separation = 12
+theme_override_constants/separation = 18
 
-[node name="CardShopOptionButtonA" type="Button" parent="CardShopOverlay/CenterContainer/ShopPanel/MarginContainer/VBoxContainer/CardShopOptionsRow" unique_id=550926147]
-custom_minimum_size = Vector2(0, 180)
+[node name="CardShopOptionCardA" parent="CardShopOverlay/CenterContainer/ShopPanel/MarginContainer/VBoxContainer/CardShopOptionsRow" instance=ExtResource("3_support_card_widget")]
+custom_minimum_size = Vector2(0, 332)
 layout_mode = 2
 size_flags_horizontal = 3
-text = "Carta A"
-autowrap_mode = 3
 
-[node name="CardShopOptionButtonB" type="Button" parent="CardShopOverlay/CenterContainer/ShopPanel/MarginContainer/VBoxContainer/CardShopOptionsRow" unique_id=1329665580]
-custom_minimum_size = Vector2(0, 180)
+[node name="CardShopOptionCardB" parent="CardShopOverlay/CenterContainer/ShopPanel/MarginContainer/VBoxContainer/CardShopOptionsRow" instance=ExtResource("3_support_card_widget")]
+custom_minimum_size = Vector2(0, 332)
 layout_mode = 2
 size_flags_horizontal = 3
-text = "Carta B"
-autowrap_mode = 3
+
+[node name="MasterPromotionToken" parent="." instance=ExtResource("2_master_promotion_token")]

@@ -1,13 +1,39 @@
 extends Node
 class_name BattleManager
 
+# -----------------------------------------------------------------------------
+# 1. Identity, ownership, signals and helper data classes
+# -----------------------------------------------------------------------------
+#
+# Internal navigation map for Phase 0:
+# - Sections 1-4 define ownership, constants, runtime state and scene refs.
+# - Sections 5-8 cover lifecycle, match setup and prep orchestration.
+# - Sections 9-10 cover battle start, round resolution and HUD sync.
+# - Sections 11-12 cover prep interactions plus tactical combat helpers.
+# - Sections 13-15 cover inspect UI, observer/live-table support and general
+#   helpers.
+#
+# Note: the file still keeps some historical ordering to avoid risky rewrites.
+# This pass improves navigability without changing gameplay behavior.
+
+# Structural guide for Phase 0:
+# - This script is the owner of the local playable demo loop.
+# - Operational source of truth for the demo: start_match -> prep ->
+#   card shop/supports -> local auto-battle -> local round result ->
+#   next round/final.
+# - LobbyManager is consulted as the internal match-state backend.
+# - CombatInstance remains future-facing support for observer/live tables and
+#   does not own the local player's battle flow.
+
 signal hud_update_requested(
 	round_number: int,
 	player_life: int,
 	gold_value: int,
 	last_income_total: int,
 	state_name: String,
-	opponent_name: String
+	opponent_name: String,
+	master_status_text: String,
+	progression_feedback_text: String
 )
 
 class DeployOption:
@@ -60,6 +86,10 @@ class RespawnRequest:
 		home_coord = p_home_coord
 		is_master = p_is_master
 
+# -----------------------------------------------------------------------------
+# 2. Constants
+# -----------------------------------------------------------------------------
+
 const DRAG_MODE_NONE := 0
 const DRAG_MODE_DEPLOY_SLOT := 1
 const DRAG_MODE_BOARD_UNIT := 2
@@ -90,6 +120,10 @@ const LOCAL_PLAYER_ID := "player_1"
 
 const PLAYER_MASTER_COORD := Vector2i(3, BattleConfig.BOARD_HEIGHT - 1)
 const ENEMY_MASTER_COORD := Vector2i(3, 0)
+
+# -----------------------------------------------------------------------------
+# 3. Main runtime state
+# -----------------------------------------------------------------------------
 
 var round_flow: RoundFlowState = RoundFlowState.new()
 var observer_state: ObserverState = ObserverState.new()
@@ -166,6 +200,7 @@ var drag_unit: BattleUnitState = null
 var drag_hover_coord: Vector2i = Vector2i(-1, -1)
 var drag_drop_valid: bool = false
 var drag_drop_reason: String = ""
+var master_promotion_drag_active: bool = false
 
 var pending_player_respawns: Array[RespawnRequest] = []
 var pending_enemy_respawns: Array[RespawnRequest] = []
@@ -211,12 +246,19 @@ var remote_round_settlement_last_second: int = -1
 var local_elimination_prompt_active: bool = false
 var local_post_elimination_observer_enabled: bool = false
 
+# Match-state and future-facing helpers kept alive without replacing the local
+# battle flow as the owner of the playable demo.
 var lobby_manager: LobbyManager = LobbyManager.new()
 var round_manager: RoundManager = RoundManager.new()
 var board_system: BoardSystem = BoardSystem.new()
 var enemy_prep_planner: EnemyPrepPlanner = EnemyPrepPlanner.new()
 var race_synergy_system: RaceSynergySystem = RaceSynergySystem.new()
 var necromancer_deck_rules: NecromancerDeckRules = NecromancerDeckRules.new()
+var prep_helper: BattlePrepHelper = BattlePrepHelper.new()
+
+# -----------------------------------------------------------------------------
+# 4. Scene references
+# -----------------------------------------------------------------------------
 
 @onready var board_grid: BoardGrid = $BoardGrid
 @onready var board_presentation_3d: BoardPresentation3D = get_node_or_null("BoardPresentation3D") as BoardPresentation3D
@@ -224,12 +266,16 @@ var necromancer_deck_rules: NecromancerDeckRules = NecromancerDeckRules.new()
 @onready var deploy_bar: DeployBar = get_node_or_null("DeployBar") as DeployBar
 @onready var board_camera_controller: BoardCameraController = get_node_or_null("BoardCameraController") as BoardCameraController
 
+# -----------------------------------------------------------------------------
+# 5. Lifecycle and input entry points
+# -----------------------------------------------------------------------------
+
 func _get_signal_bus() -> Node:
 	return get_node_or_null("/root/SignalBus")
 
 func _ready() -> void:
 	if not GameData.has_selected_deck():
-		call_deferred("_redirect_to_deck_select")
+		call_deferred("_redirect_to_start_screen")
 		return
 
 	randomize()
@@ -249,6 +295,10 @@ func _ready() -> void:
 		battle_hud.elimination_watch_requested.connect(_on_elimination_watch_requested)
 		battle_hud.elimination_back_requested.connect(_on_elimination_back_requested)
 		battle_hud.play_again_requested.connect(_on_play_again_requested)
+		battle_hud.master_promotion_drag_started.connect(_on_master_promotion_drag_started)
+		battle_hud.master_promotion_drag_moved.connect(_on_master_promotion_drag_moved)
+		battle_hud.master_promotion_drag_released.connect(_on_master_promotion_drag_released)
+		battle_hud.master_promotion_drag_canceled.connect(_on_master_promotion_drag_canceled)
 		battle_hud.clear_unit_info()
 	if deploy_bar:
 		deploy_bar.deploy_slot_pressed.connect(_on_deploy_slot_pressed)
@@ -258,8 +308,8 @@ func _ready() -> void:
 
 	start_match()
 
-func _redirect_to_deck_select() -> void:
-	get_tree().change_scene_to_file(GameData.DECK_SELECT_SCENE_PATH)
+func _redirect_to_start_screen() -> void:
+	get_tree().change_scene_to_file(GameData.START_SCREEN_SCENE_PATH)
 
 func _process(delta: float) -> void:
 	var observed_player_id: String = observer_state.observed_player_id if observer_state.is_remote_view() else ""
@@ -545,6 +595,12 @@ func _clear_runtime_team_units(team_side: int) -> void:
 		kept_units.append(unit_state)
 	runtime_units = kept_units
 
+# -----------------------------------------------------------------------------
+# 6. Lifecycle-adjacent overlays and post-result UI
+# -----------------------------------------------------------------------------
+# These helpers still live near lifecycle/input because they are tightly
+# coupled to HUD and observer transitions. Future extraction candidate.
+
 func _build_match_ranking_lines() -> Array[String]:
 	var ranking_lines: Array[String] = []
 	for ranking_entry in lobby_manager.get_match_ranking_entries():
@@ -638,100 +694,129 @@ func _on_elimination_watch_requested() -> void:
 func _on_elimination_back_requested() -> void:
 	if battle_hud != null:
 		battle_hud.hide_elimination_screen()
-	_redirect_to_deck_select()
+	_redirect_to_start_screen()
 
 func _on_play_again_requested() -> void:
 	if battle_hud != null:
 		battle_hud.hide_final_screen()
-	_redirect_to_deck_select()
+	_redirect_to_start_screen()
+
+func _apply_drag_feedback_payload(payload: Dictionary) -> void:
+	if board_grid == null:
+		return
+	if bool(payload.get("clear_hover", false)):
+		board_grid.clear_drag_hover()
+	if bool(payload.get("set_hover_coord", false)):
+		drag_hover_coord = payload.get("hover_coord", Vector2i(-1, -1))
+	drag_drop_valid = bool(payload.get("drag_drop_valid", false))
+	drag_drop_reason = str(payload.get("drag_drop_reason", ""))
+	if bool(payload.get("set_board_hover", false)):
+		board_grid.set_drag_hover(
+			payload.get("board_hover_coord", Vector2i(-1, -1)),
+			true,
+			bool(payload.get("board_hover_valid", false))
+		)
+	if deploy_bar != null and bool(payload.get("set_sell_feedback", false)):
+		deploy_bar.set_sell_zone_feedback(
+			bool(payload.get("sell_feedback_over", false)),
+			bool(payload.get("sell_feedback_valid", false))
+		)
 
 func _begin_deploy_drag(slot_index: int) -> void:
 	if _block_observer_input("deploy_unit"):
 		return
-	if slot_index < 0 or slot_index >= player_deploy_pool.size():
-		print("Selecao de deploy bloqueada: slot %d indisponivel (pool=%d)" % [slot_index + 1, player_deploy_pool.size()])
-		return
 
-	var option: DeployOption = player_deploy_pool[slot_index]
+	var option: DeployOption = player_deploy_pool[slot_index] if slot_index >= 0 and slot_index < player_deploy_pool.size() else null
 	var state: Dictionary = _get_player_deploy_option_state(option)
-	if not bool(state.get("available", false)):
-		print("Selecao de deploy bloqueada: slot %d %s (%s)" % [
-			slot_index + 1,
-			str(state.get("status", "UNAVAILABLE")).to_lower(),
-			str(state.get("reason", "indisponivel")),
-		])
+	var drag_payload: Dictionary = prep_helper.build_begin_deploy_drag_payload(
+		slot_index,
+		player_deploy_pool.size(),
+		option,
+		state,
+		DRAG_MODE_DEPLOY_SLOT
+	)
+	if not bool(drag_payload.get("ok", false)):
+		print(str(drag_payload.get("message", "Selecao de deploy bloqueada")))
 		return
 
 	_clear_support_selection(false)
-	drag_mode = DRAG_MODE_DEPLOY_SLOT
-	drag_slot_index = slot_index
-	drag_unit = null
-	selected_deploy_index = slot_index
+	drag_mode = int(drag_payload.get("drag_mode", DRAG_MODE_DEPLOY_SLOT))
+	drag_slot_index = int(drag_payload.get("drag_slot_index", slot_index))
+	drag_unit = drag_payload.get("drag_unit", null) as BattleUnitState
+	selected_deploy_index = int(drag_payload.get("selected_deploy_index", slot_index))
 	_set_selected_prep_unit(null)
 	_refresh_deploy_bar()
 	_emit_hud_update()
 
-	print("Arraste de deploy iniciado: %s (custo %d)" % [option.unit_data.id, option.unit_data.get_effective_cost()])
+	print("Arraste de deploy iniciado: %s (custo %d)" % [
+		str(drag_payload.get("unit_id", "unknown_unit")),
+		int(drag_payload.get("unit_cost", 0)),
+	])
 
 func _begin_board_unit_drag(unit_state: BattleUnitState, screen_pos: Vector2) -> void:
 	if _block_observer_input("move_unit"):
 		return
+	var drag_payload: Dictionary = prep_helper.build_begin_board_unit_drag_payload(
+		unit_state,
+		DRAG_MODE_BOARD_UNIT
+	)
+	if not bool(drag_payload.get("ok", false)):
+		return
 	_clear_support_selection(false)
-	drag_mode = DRAG_MODE_BOARD_UNIT
-	drag_slot_index = -1
-	drag_unit = unit_state
-	drag_hover_coord = unit_state.coord
-	drag_drop_reason = ""
-	drag_drop_valid = false
+	drag_mode = int(drag_payload.get("drag_mode", DRAG_MODE_BOARD_UNIT))
+	drag_slot_index = int(drag_payload.get("drag_slot_index", -1))
+	drag_unit = drag_payload.get("drag_unit", null) as BattleUnitState
+	drag_hover_coord = drag_payload.get("drag_hover_coord", Vector2i(-1, -1))
+	drag_drop_reason = str(drag_payload.get("drag_drop_reason", ""))
+	drag_drop_valid = bool(drag_payload.get("drag_drop_valid", false))
 	_refresh_deploy_bar()
 	_emit_hud_update()
 	_update_drag_feedback(screen_pos)
-	print("Arraste de unidade iniciado: %s" % unit_state.get_combat_label())
+	print("Arraste de unidade iniciado: %s" % str(drag_payload.get("log_label", "")))
 
 func _finish_deploy_drag(screen_pos: Vector2) -> void:
 	if _block_observer_input("deploy_unit"):
 		return
 	_update_drag_feedback(screen_pos)
 	var slot_index: int = drag_slot_index
-
-	if board_grid.is_valid_coord(drag_hover_coord) and drag_drop_valid:
+	var option: DeployOption = player_deploy_pool[slot_index] if slot_index >= 0 and slot_index < player_deploy_pool.size() else null
+	var finish_payload: Dictionary = prep_helper.build_finish_deploy_drag_outcome(
+		board_grid.is_valid_coord(drag_hover_coord),
+		drag_drop_valid,
+		drag_drop_reason,
+		slot_index,
+		player_deploy_pool.size(),
+		option
+	)
+	if str(finish_payload.get("action", "")) == "deploy":
 		_deploy_slot_to_coord(drag_slot_index, drag_hover_coord)
 		_clear_drag_state()
 		return
-
-	if board_grid.is_valid_coord(drag_hover_coord):
-		if drag_drop_reason.is_empty():
-			drag_drop_reason = "alvo invalido"
-		print("Arraste de deploy bloqueado: %s" % drag_drop_reason)
-	else:
-		var option: DeployOption = null
-		if slot_index >= 0 and slot_index < player_deploy_pool.size():
-			option = player_deploy_pool[slot_index]
-		if option != null:
-			print("Alvo de deploy mantido: clique em uma celula do jogador para posicionar %s" % option.unit_data.display_name)
-
-	_clear_drag_state(true)
+	if not str(finish_payload.get("message", "")).is_empty():
+		print(str(finish_payload.get("message", "")))
+	_clear_drag_state(bool(finish_payload.get("keep_deploy_selection", true)))
 
 func _finish_board_unit_drag(screen_pos: Vector2) -> void:
 	if _block_observer_input("move_unit"):
 		return
 	_update_drag_feedback(screen_pos)
-
-	if drag_unit == null:
-		_clear_drag_state()
-		return
-
-	if deploy_bar and deploy_bar.is_over_sell_zone(screen_pos):
-		_try_sell_unit(drag_unit)
-		_clear_drag_state()
-		return
-
-	if board_grid.is_valid_coord(drag_hover_coord):
-		var move_check: Dictionary = _can_move_unit_to_coord(drag_unit, drag_hover_coord)
-		var move_ok: bool = bool(move_check.get("ok", false))
-		var move_reason: String = str(move_check.get("reason", ""))
-
-		if move_ok and drag_hover_coord != drag_unit.coord:
+	var over_sell_zone: bool = deploy_bar != null and deploy_bar.is_over_sell_zone(screen_pos)
+	var move_check: Dictionary = {}
+	if drag_unit != null and board_grid.is_valid_coord(drag_hover_coord):
+		move_check = _can_move_unit_to_coord(drag_unit, drag_hover_coord)
+	var finish_payload: Dictionary = prep_helper.build_finish_board_drag_outcome(
+		drag_unit,
+		over_sell_zone,
+		board_grid.is_valid_coord(drag_hover_coord),
+		drag_hover_coord,
+		move_check
+	)
+	match str(finish_payload.get("action", "clear")):
+		"sell":
+			_try_sell_unit(drag_unit)
+			_clear_drag_state()
+			return
+		"move":
 			var from_coord: Vector2i = drag_unit.coord
 			if board_grid.move_unit(drag_unit, drag_hover_coord):
 				if drag_unit.team_side == GameEnums.TeamSide.PLAYER:
@@ -744,24 +829,25 @@ func _finish_board_unit_drag(screen_pos: Vector2) -> void:
 					from_coord,
 					drag_hover_coord,
 				])
-		elif move_reason != "same_cell":
-			print("Arraste de unidade cancelado: %s" % move_reason)
+		_:
+			if not str(finish_payload.get("message", "")).is_empty():
+				print(str(finish_payload.get("message", "")))
 
 	_clear_drag_state()
 
 func _clear_drag_state(keep_deploy_selection: bool = false) -> void:
-	var armed_slot_index: int = drag_slot_index
+	var clear_payload: Dictionary = prep_helper.build_clear_drag_state_payload(
+		drag_slot_index,
+		keep_deploy_selection
+	)
 	_set_selected_prep_unit(null)
-	drag_mode = DRAG_MODE_NONE
-	drag_slot_index = -1
-	drag_unit = null
-	drag_hover_coord = Vector2i(-1, -1)
-	drag_drop_reason = ""
-	drag_drop_valid = false
-	if keep_deploy_selection and armed_slot_index >= 0:
-		selected_deploy_index = armed_slot_index
-	else:
-		selected_deploy_index = -1
+	drag_mode = int(clear_payload.get("drag_mode", DRAG_MODE_NONE))
+	drag_slot_index = int(clear_payload.get("drag_slot_index", -1))
+	drag_unit = clear_payload.get("drag_unit", null) as BattleUnitState
+	drag_hover_coord = clear_payload.get("drag_hover_coord", Vector2i(-1, -1))
+	drag_drop_reason = str(clear_payload.get("drag_drop_reason", ""))
+	drag_drop_valid = bool(clear_payload.get("drag_drop_valid", false))
+	selected_deploy_index = int(clear_payload.get("selected_deploy_index", -1))
 
 	board_grid.clear_drag_hover()
 	if deploy_bar:
@@ -773,65 +859,81 @@ func _clear_drag_state(keep_deploy_selection: bool = false) -> void:
 
 func _update_drag_feedback(screen_pos: Vector2) -> void:
 	if drag_mode == DRAG_MODE_DEPLOY_SLOT:
-		if _is_screen_over_ui(screen_pos):
-			board_grid.clear_drag_hover()
-			drag_hover_coord = Vector2i(-1, -1)
-			drag_drop_valid = false
-			drag_drop_reason = "solto fora do tabuleiro"
-			if deploy_bar:
-				deploy_bar.set_sell_zone_feedback(false, false)
-			return
-		if drag_slot_index < 0 or drag_slot_index >= player_deploy_pool.size():
-			board_grid.clear_drag_hover()
-			drag_drop_valid = false
-			drag_drop_reason = "slot invalido"
-			return
-
-		var deploy_coord: Vector2i = _screen_to_board_coord(screen_pos)
-		if not board_grid.is_valid_coord(deploy_coord):
-			board_grid.clear_drag_hover()
-			drag_hover_coord = Vector2i(-1, -1)
-			drag_drop_valid = false
-			drag_drop_reason = "solto fora do tabuleiro"
+		var deploy_payload: Dictionary = {}
+		if not _is_screen_over_ui(screen_pos) and drag_slot_index >= 0 and drag_slot_index < player_deploy_pool.size():
+			var deploy_coord: Vector2i = _screen_to_board_coord(screen_pos)
+			var deploy_coord_valid: bool = board_grid.is_valid_coord(deploy_coord)
+			var deploy_check: Dictionary = _can_deploy_option_to_coord(player_deploy_pool[drag_slot_index], deploy_coord) if deploy_coord_valid else {}
+			deploy_payload = prep_helper.build_deploy_drag_feedback_payload(
+				false,
+				drag_slot_index,
+				player_deploy_pool.size(),
+				deploy_coord_valid,
+				deploy_coord,
+				deploy_check
+			)
 		else:
-			var check: Dictionary = _can_deploy_option_to_coord(player_deploy_pool[drag_slot_index], deploy_coord)
-			drag_drop_valid = bool(check.get("ok", false))
-			drag_drop_reason = str(check.get("reason", ""))
-			drag_hover_coord = deploy_coord
-			board_grid.set_drag_hover(deploy_coord, true, drag_drop_valid)
-
-		if deploy_bar:
-			deploy_bar.set_sell_zone_feedback(false, false)
+			deploy_payload = prep_helper.build_deploy_drag_feedback_payload(
+				_is_screen_over_ui(screen_pos),
+				drag_slot_index,
+				player_deploy_pool.size(),
+				false,
+				Vector2i(-1, -1),
+				{}
+			)
+		_apply_drag_feedback_payload(deploy_payload)
+		return
 
 	elif drag_mode == DRAG_MODE_BOARD_UNIT:
-		if _is_screen_over_ui(screen_pos) and not (deploy_bar and deploy_bar.is_over_sell_zone(screen_pos)):
-			board_grid.clear_drag_hover()
-			drag_hover_coord = Vector2i(-1, -1)
-			drag_drop_valid = false
-			drag_drop_reason = "solto fora do tabuleiro"
-			if deploy_bar:
-				deploy_bar.set_sell_zone_feedback(false, false)
-			return
+		var blocked_by_ui: bool = _is_screen_over_ui(screen_pos) and not (deploy_bar and deploy_bar.is_over_sell_zone(screen_pos))
+		var over_sell: bool = deploy_bar != null and deploy_bar.is_over_sell_zone(screen_pos)
 		var move_coord: Vector2i = _screen_to_board_coord(screen_pos)
-		if not board_grid.is_valid_coord(move_coord):
-			board_grid.clear_drag_hover()
-			drag_hover_coord = Vector2i(-1, -1)
-			drag_drop_valid = false
-			drag_drop_reason = "solto fora do tabuleiro"
-		else:
-			var move_check: Dictionary = _can_move_unit_to_coord(drag_unit, move_coord)
-			drag_drop_valid = bool(move_check.get("ok", false))
-			drag_drop_reason = str(move_check.get("reason", ""))
-			drag_hover_coord = move_coord
-			board_grid.set_drag_hover(move_coord, true, drag_drop_valid)
+		var move_coord_valid: bool = board_grid.is_valid_coord(move_coord)
+		var move_check: Dictionary = _can_move_unit_to_coord(drag_unit, move_coord) if drag_unit != null and move_coord_valid else {}
+		var sell_check: Dictionary = _can_sell_unit(drag_unit) if drag_unit != null and over_sell else {}
+		var move_payload: Dictionary = prep_helper.build_board_drag_feedback_payload(
+			blocked_by_ui,
+			over_sell,
+			move_coord_valid,
+			move_coord,
+			move_check,
+			sell_check
+		)
+		_apply_drag_feedback_payload(move_payload)
+		return
 
-		if deploy_bar:
-			var over_sell: bool = deploy_bar.is_over_sell_zone(screen_pos)
-			var sell_valid: bool = false
-			if over_sell:
-				var sell_check: Dictionary = _can_sell_unit(drag_unit)
-				sell_valid = bool(sell_check.get("ok", false))
-			deploy_bar.set_sell_zone_feedback(over_sell, sell_valid)
+func _select_deploy_slot(index: int) -> void:
+	if card_shop_open:
+		return
+	if _block_observer_input("deploy_hotkey"):
+		return
+	var option: DeployOption = player_deploy_pool[index] if index >= 0 and index < player_deploy_pool.size() else null
+	var state: Dictionary = _get_player_deploy_option_state(option)
+	var selection_payload: Dictionary = prep_helper.build_deploy_slot_selection_payload(
+		index,
+		player_deploy_pool.size(),
+		option,
+		state
+	)
+	if not bool(selection_payload.get("ok", false)):
+		print(str(selection_payload.get("message", "Selecao de deploy bloqueada")))
+		return
+
+	_clear_support_selection(false)
+	selected_deploy_index = int(selection_payload.get("selected_deploy_index", index))
+	_set_selected_prep_unit(null)
+	_refresh_deploy_bar()
+	_emit_hud_update()
+	print("Deploy selecionado: slot=%d unidade=%s custo=%d ouro=%d" % [
+		index + 1,
+		str(selection_payload.get("unit_id", "unknown_unit")),
+		int(selection_payload.get("unit_cost", 0)),
+		gold_current,
+	])
+
+# -----------------------------------------------------------------------------
+# 7. Match setup, shared runtime state and backend sync
+# -----------------------------------------------------------------------------
 
 func set_state(new_state: int) -> void:
 	current_state = new_state
@@ -1229,6 +1331,12 @@ func _default_deploy_home_coord(slot_index: int, team_side: int) -> Vector2i:
 
 	return Vector2i(SPAWN_COLUMN_ORDER[column_index], row_order[row_index])
 
+# -----------------------------------------------------------------------------
+# 8. Match bootstrap and prep orchestration
+# -----------------------------------------------------------------------------
+
+# Local demo loop ownership:
+# This is the top-level entry for the playable match after deck selection.
 func start_match() -> void:
 	_setup_match_context()
 	lobby_manager.initialize_match_economy()
@@ -1305,6 +1413,9 @@ func _setup_initial_match_board() -> void:
 	if enemy_deck != null:
 		_spawn_roster_unit(enemy_deck.master_data_path, GameEnums.TeamSide.ENEMY, ENEMY_MASTER_COORD, true)
 
+# Local demo loop ownership:
+# Prep is orchestrated here even when it consumes match-state data from the
+# lobby backend and observer/live-table support exists elsewhere.
 func _start_prep_phase() -> void:
 	card_shop_open = false
 	var prep_shop_state: ShopState = _local_shop_state()
@@ -1357,9 +1468,11 @@ func _start_prep_phase() -> void:
 	_clear_inspected_context()
 	_clear_drag_state()
 	_clear_support_selection(false)
+	_cancel_master_promotion_drag()
 	_apply_board_view_mode(GameEnums.BoardViewMode.SELF_ONLY, true)
 	if local_has_combat:
 		_auto_prepare_enemy_board()
+		_auto_apply_pending_promotions_for_team(GameEnums.TeamSide.ENEMY, false)
 		_auto_use_enemy_support_cards()
 	_refresh_race_synergy_state(true)
 	_sync_runtime_board_snapshots(_match_phase_name())
@@ -1536,6 +1649,7 @@ func _materialize_respawn_request(request: RespawnRequest) -> BattleUnitState:
 		request.is_master,
 		request.home_coord
 	)
+	_apply_persistent_master_promotion_bonus(state)
 	if request.is_master:
 		_set_persistent_master_home_coord(request.team_side, request.home_coord)
 	_record_persistent_formation_unit(state)
@@ -1629,6 +1743,15 @@ func _refresh_deck_passive_state(log_changes: bool) -> void:
 	if log_changes and not enemy_passive_units.is_empty():
 		print("Ganancia do Rei (inimigo): %s" % _join_strings(enemy_passive_units))
 
+# -----------------------------------------------------------------------------
+# 9. Local battle start, execution and round resolution
+# -----------------------------------------------------------------------------
+# BattleManager remains the owner of the playable local fight. LobbyManager is
+# consulted only to persist match-state consequences after local resolution.
+
+# Local demo loop ownership:
+# The local battle starts from here. This script remains the authority for the
+# player's playable battle instead of delegating it to CombatInstance.
 func _confirm_start_battle(force_auto_start: bool = false) -> void:
 	if _battle_running or current_state != GameEnums.BattleState.PREP:
 		return
@@ -1649,6 +1772,9 @@ func _confirm_start_battle(force_auto_start: bool = false) -> void:
 		print("AUTO-START do PREP: seguindo com a formacao atual sem deploy adicional do jogador")
 	elif deployed_player_units <= 0:
 		print("BATALHA seguindo so com o mestre: nenhum slot de deploy pronto no PREP")
+	_cancel_master_promotion_drag()
+	if _local_player_state() != null and _local_player_state().has_pending_master_promotion():
+		_auto_apply_pending_promotions_for_team(GameEnums.TeamSide.PLAYER, true)
 
 	_set_input_locked(true)
 	card_shop_open = false
@@ -1863,6 +1989,9 @@ func _resolve_local_combat_failsafe_outcome() -> Dictionary:
 		"reason": local_combat_failsafe_reason,
 	}
 
+# Operational boundary:
+# BattleManager decides the local result first, then asks LobbyManager to apply
+# match-state consequences such as global damage, eliminations and ranking.
 func _finish_round(winner_team: int, survivor_count: int) -> void:
 	var round_winner_label: String = "EMPATE"
 	var damage_value: int = 0
@@ -1976,6 +2105,9 @@ func _update_remote_round_settlement(delta: float) -> void:
 	awaiting_remote_round_settlement = false
 	_finalize_round_after_remote_tables()
 
+# Future-facing support boundary:
+# Remote/live tables may still resolve in parallel, but this reconciliation step
+# is secondary to the local demo loop and only finalizes the backend state.
 func _finalize_round_after_remote_tables() -> void:
 	lobby_manager.process_eliminations_for_life_threshold(current_round)
 	lobby_manager.finalize_match_if_needed(current_round)
@@ -2063,6 +2195,10 @@ func _match_phase_name() -> String:
 		_:
 			return "DESCONHECIDO"
 
+# -----------------------------------------------------------------------------
+# 10. HUD, sidebar and runtime snapshot sync
+# -----------------------------------------------------------------------------
+
 func _emit_hud_update() -> void:
 	_sync_runtime_board_snapshots(_match_phase_name())
 	var local_player: MatchPlayerState = _local_player_state()
@@ -2072,10 +2208,267 @@ func _emit_hud_update() -> void:
 		gold_current,
 		local_player.last_income_total if local_player != null else 0,
 		"%s / %s" % [_match_phase_name(), _state_name()],
-		_current_opponent_display_name()
+		_current_opponent_display_name(),
+		_build_local_master_status_text(),
+		_build_local_master_feedback_text()
 	)
 	if battle_hud:
 		battle_hud.update_player_sidebar(_build_player_sidebar_entries())
+	_sync_master_promotion_token_ui()
+
+func _build_local_master_status_text() -> String:
+	var local_player: MatchPlayerState = _local_player_state()
+	if local_player == null:
+		return ""
+	return local_player.get_master_status_text()
+
+func _build_local_master_feedback_text() -> String:
+	var local_player: MatchPlayerState = _local_player_state()
+	if local_player == null:
+		return ""
+	var feedback_parts: Array[String] = []
+	var base_feedback: String = local_player.get_master_feedback_text()
+	if not base_feedback.is_empty():
+		feedback_parts.append(base_feedback)
+	if local_player.has_pending_master_promotion():
+		feedback_parts.append("Arraste a ficha do Mestre para promover")
+	return _join_strings(feedback_parts, " | ")
+
+func _sync_master_promotion_token_ui() -> void:
+	if battle_hud == null:
+		return
+
+	var local_player: MatchPlayerState = _local_player_state()
+	var pending_count: int = local_player.get_pending_master_promotion_count() if local_player != null else 0
+	var interaction_enabled: bool = _can_interact_with_local_master_promotion()
+	if pending_count <= 0:
+		_cancel_master_promotion_drag()
+		battle_hud.hide_master_promotion_token()
+		return
+
+	if not interaction_enabled:
+		_cancel_master_promotion_drag()
+		battle_hud.hide_master_promotion_token()
+		return
+
+	battle_hud.set_master_promotion_token_state(
+		true,
+		pending_count,
+		true,
+		"Arraste para uma unidade aliada elegivel."
+	)
+
+func _can_interact_with_local_master_promotion() -> bool:
+	var local_player: MatchPlayerState = _local_player_state()
+	if local_player == null or not local_player.has_pending_master_promotion():
+		return false
+	if current_state != GameEnums.BattleState.PREP:
+		return false
+	if card_shop_open or input_locked or _is_observer_mode_active():
+		return false
+	return true
+
+func _on_master_promotion_drag_started(screen_pos: Vector2) -> void:
+	_begin_master_promotion_drag(screen_pos)
+
+func _on_master_promotion_drag_moved(screen_pos: Vector2) -> void:
+	_update_master_promotion_drag_feedback(screen_pos)
+
+func _on_master_promotion_drag_released(screen_pos: Vector2) -> void:
+	_finish_master_promotion_drag(screen_pos)
+
+func _on_master_promotion_drag_canceled() -> void:
+	_cancel_master_promotion_drag()
+
+func _get_team_field_unit_limit(team_side: int) -> int:
+	var player_state: MatchPlayerState = _get_player_state_for_team(team_side)
+	if player_state == null:
+		return BattleConfig.MAX_FIELD_UNITS
+	return clampi(player_state.get_field_unit_limit(), 0, BattleConfig.MAX_FIELD_UNITS)
+
+func _apply_persistent_master_promotion_bonus(unit_state: BattleUnitState) -> void:
+	if unit_state == null or unit_state.unit_data == null:
+		return
+	if unit_state.is_master or unit_state.is_summoned_token:
+		return
+	var player_state: MatchPlayerState = _get_player_state_for_team(unit_state.team_side)
+	if player_state == null:
+		return
+	var promotion_bonus: Dictionary = player_state.get_unit_promotion_bonus(unit_state.unit_data.id)
+	if promotion_bonus.is_empty():
+		return
+	unit_state.apply_permanent_stat_bonus(
+		int(promotion_bonus.get("hp_bonus", 0)),
+		int(promotion_bonus.get("physical_attack_bonus", 0)),
+		int(promotion_bonus.get("magic_attack_bonus", 0)),
+		int(promotion_bonus.get("physical_defense_bonus", 0)),
+		int(promotion_bonus.get("magic_defense_bonus", 0))
+	)
+
+func _get_pending_local_promotion_target_coords() -> Array[Vector2i]:
+	var coords: Array[Vector2i] = []
+	var local_player: MatchPlayerState = _local_player_state()
+	if local_player == null or not local_player.has_pending_master_promotion():
+		return coords
+	if not master_promotion_drag_active:
+		return coords
+	if current_state != GameEnums.BattleState.PREP or card_shop_open or input_locked:
+		return coords
+	for unit_state in runtime_units:
+		if not _is_unit_eligible_for_master_promotion(GameEnums.TeamSide.PLAYER, unit_state):
+			continue
+		if board_grid.is_valid_coord(unit_state.coord):
+			coords.append(unit_state.coord)
+	return coords
+
+func _is_unit_eligible_for_master_promotion(team_side: int, unit_state: BattleUnitState) -> bool:
+	if unit_state == null or unit_state.unit_data == null:
+		return false
+	if not unit_state.can_act():
+		return false
+	if unit_state.team_side != team_side:
+		return false
+	if unit_state.is_master or unit_state.is_summoned_token:
+		return false
+	if not board_grid.is_valid_coord(unit_state.coord):
+		return false
+	return true
+
+func _try_apply_pending_local_promotion_to_unit(unit_state: BattleUnitState) -> bool:
+	var local_player: MatchPlayerState = _local_player_state()
+	if local_player == null or not local_player.has_pending_master_promotion():
+		return false
+	if current_state != GameEnums.BattleState.PREP or card_shop_open or input_locked:
+		return false
+	return _apply_master_promotion_to_runtime_unit(GameEnums.TeamSide.PLAYER, unit_state, false)
+
+func _apply_master_promotion_to_runtime_unit(team_side: int, unit_state: BattleUnitState, is_auto: bool) -> bool:
+	if not _is_unit_eligible_for_master_promotion(team_side, unit_state):
+		return false
+	var player_state: MatchPlayerState = _get_player_state_for_team(team_side)
+	if player_state == null or not player_state.has_pending_master_promotion():
+		return false
+
+	var promotion_result: Dictionary = player_state.apply_master_promotion_to_unit(
+		unit_state.unit_data.id,
+		unit_state.unit_data.class_type,
+		unit_state.get_display_name()
+	)
+	if not bool(promotion_result.get("ok", false)):
+		return false
+
+	var granted_bonus: Dictionary = promotion_result.get("granted_bonus", {})
+	unit_state.apply_permanent_stat_bonus(
+		int(granted_bonus.get("hp_bonus", 0)),
+		int(granted_bonus.get("physical_attack_bonus", 0)),
+		int(granted_bonus.get("magic_attack_bonus", 0)),
+		int(granted_bonus.get("physical_defense_bonus", 0)),
+		int(granted_bonus.get("magic_defense_bonus", 0))
+	)
+	if unit_state.actor != null:
+		unit_state.actor.on_buff()
+	_refresh_actor_state(unit_state)
+	_refresh_targeting_preview()
+	_refresh_deploy_bar()
+	_refresh_inspected_unit_panel()
+	_emit_hud_update()
+
+	var promotion_mode: String = "AUTO" if is_auto else "MANUAL"
+	print("MESTRE PROMOCAO %s: %s recebeu %s (%s)" % [
+		promotion_mode,
+		unit_state.get_combat_label(),
+		str(promotion_result.get("promotion_label", "Promocao")),
+		unit_state.get_permanent_stat_bonus_text(),
+	])
+	return true
+
+func _find_best_promotion_candidate(team_side: int) -> BattleUnitState:
+	var best_unit: BattleUnitState = null
+	var best_score: int = -1
+	for unit_state in runtime_units:
+		if not _is_unit_eligible_for_master_promotion(team_side, unit_state):
+			continue
+		var score: int = _estimate_runtime_unit_power(unit_state)
+		if best_unit == null or score > best_score:
+			best_unit = unit_state
+			best_score = score
+	return best_unit
+
+func _auto_apply_pending_promotions_for_team(team_side: int, is_fallback: bool) -> void:
+	var player_state: MatchPlayerState = _get_player_state_for_team(team_side)
+	if player_state == null or not player_state.has_pending_master_promotion():
+		return
+	while player_state.has_pending_master_promotion():
+		var candidate: BattleUnitState = _find_best_promotion_candidate(team_side)
+		if candidate == null:
+			var pending_label: String = "fallback adiado" if is_fallback else "pendente mantida"
+			print("MESTRE PROMOCAO %s: nenhum alvo elegivel em campo para %s" % [
+				pending_label,
+				player_state.display_name,
+			])
+			return
+		if not _apply_master_promotion_to_runtime_unit(team_side, candidate, true):
+			return
+
+func _begin_master_promotion_drag(screen_pos: Vector2) -> void:
+	if not _can_interact_with_local_master_promotion():
+		if battle_hud != null:
+			battle_hud.cancel_master_promotion_drag()
+		return
+	if drag_mode != DRAG_MODE_NONE:
+		if battle_hud != null:
+			battle_hud.cancel_master_promotion_drag()
+		return
+
+	_clear_support_selection(false)
+	master_promotion_drag_active = true
+	_update_master_promotion_drag_feedback(screen_pos)
+	_refresh_targeting_preview()
+
+func _update_master_promotion_drag_feedback(screen_pos: Vector2) -> void:
+	if not master_promotion_drag_active:
+		return
+
+	var hover_text: String = "Solte sobre uma unidade aliada elegivel"
+	var hover_valid: bool = false
+	var hover_coord: Vector2i = _screen_to_board_coord(screen_pos)
+	if board_grid != null and board_grid.is_valid_coord(hover_coord):
+		var hovered_unit: BattleUnitState = board_grid.get_unit_at(hover_coord)
+		if hovered_unit != null and board_grid.is_unit_visible_in_current_view(hovered_unit):
+			hover_valid = _is_unit_eligible_for_master_promotion(GameEnums.TeamSide.PLAYER, hovered_unit)
+			hover_text = hovered_unit.get_display_name() if hover_valid else "Alvo invalido"
+		else:
+			hover_text = "Alvo invalido"
+		board_grid.set_drag_hover(hover_coord, true, hover_valid)
+	else:
+		if board_grid != null:
+			board_grid.clear_drag_hover()
+
+	if battle_hud != null:
+		battle_hud.set_master_promotion_drag_feedback(hover_valid, hover_text)
+
+func _finish_master_promotion_drag(screen_pos: Vector2) -> void:
+	if not master_promotion_drag_active:
+		return
+
+	var applied: bool = false
+	var drop_coord: Vector2i = _screen_to_board_coord(screen_pos)
+	if board_grid != null and board_grid.is_valid_coord(drop_coord):
+		var hovered_unit: BattleUnitState = board_grid.get_unit_at(drop_coord)
+		if hovered_unit != null and board_grid.is_unit_visible_in_current_view(hovered_unit):
+			applied = _try_apply_pending_local_promotion_to_unit(hovered_unit)
+		if not applied:
+			print("PROMOCAO bloqueada: solte a ficha sobre uma unidade aliada elegivel")
+
+	_cancel_master_promotion_drag()
+
+func _cancel_master_promotion_drag() -> void:
+	if board_grid != null:
+		board_grid.clear_drag_hover()
+	if battle_hud != null:
+		battle_hud.cancel_master_promotion_drag()
+	master_promotion_drag_active = false
+	_refresh_targeting_preview()
 
 func _build_player_sidebar_entries() -> Array[Dictionary]:
 	var entries: Array[Dictionary] = []
@@ -2156,7 +2549,7 @@ func _store_runtime_board_snapshot(player_id: String, team_side: int, phase_labe
 			"race_name": unit_state.get_race_name(),
 			"cost": unit_state.unit_data.get_effective_cost() if unit_state.unit_data != null else 0,
 			"current_hp": unit_state.current_hp,
-			"max_hp": unit_state.unit_data.max_hp if unit_state.unit_data != null else 0,
+			"max_hp": unit_state.get_max_hp_value(),
 			"current_mana": unit_state.current_mana,
 			"mana_max": unit_state.get_mana_max(),
 			"physical_attack": unit_state.get_physical_attack_value(),
@@ -2249,115 +2642,73 @@ func _runtime_snapshot_summary(units: Array[Dictionary]) -> String:
 		])
 	return _join_strings(summary_parts)
 
+# -----------------------------------------------------------------------------
+# 11. Deploy, drag, sell, supports and shop interactions
+# -----------------------------------------------------------------------------
+# This block appears later in the file than the ideal loop order to keep this
+# pass low-risk. It still belongs to PREP ownership.
+
 func _refresh_deploy_bar() -> void:
 	if not deploy_bar:
 		return
-
-	var unit_slot_data: Array[Dictionary] = []
-	for option in player_deploy_pool:
-		unit_slot_data.append(_build_deploy_slot_view_data(option))
-
-	var dragging_idx: int = drag_slot_index if drag_mode == DRAG_MODE_DEPLOY_SLOT else -1
-	deploy_bar.update_unit_slots(unit_slot_data, dragging_idx)
-
-	var support_slot_data: Array[Dictionary] = []
-	for option in player_support_pool:
-		support_slot_data.append(_build_support_slot_view_data(option))
-	deploy_bar.update_support_slots(support_slot_data, selected_support_index)
-
-func _build_deploy_slot_view_data(option: DeployOption) -> Dictionary:
-	var state: Dictionary = _get_player_deploy_option_state(option)
-	var unit_name: String = "Unidade desconhecida"
-	var unit_cost: int = 0
-	if option != null and option.unit_data != null:
-		unit_name = option.unit_data.display_name
-		unit_cost = option.unit_data.get_effective_cost()
-
-	return {
-		"name": unit_name,
-		"cost": unit_cost,
-		"used": str(state.get("status", "UNAVAILABLE")) == "USED",
-		"affordable": bool(state.get("available", false)),
-		"status": str(state.get("status", "UNAVAILABLE")),
-	}
-
-func _build_support_slot_view_data(option: SupportOption) -> Dictionary:
-	var state: Dictionary = _get_player_support_option_state(option)
-	var card_name: String = "Suporte desconhecido"
-	if option != null and option.card_data != null:
-		card_name = option.card_data.display_name
-
-	return {
-		"name": card_name,
-		"cost": 0,
-		"cost_label": "Gratis",
-		"used": str(state.get("status", "UNAVAILABLE")) == "USED",
-		"affordable": bool(state.get("available", false)),
-		"status": str(state.get("status", "UNAVAILABLE")),
-	}
+	var bar_payload: Dictionary = prep_helper.build_deploy_bar_payload(
+		player_deploy_pool,
+		player_support_pool,
+		drag_mode,
+		DRAG_MODE_DEPLOY_SLOT,
+		drag_slot_index,
+		selected_support_index,
+		Callable(self, "_get_player_deploy_option_state"),
+		Callable(self, "_get_player_support_option_state")
+	)
+	deploy_bar.update_unit_slots(bar_payload.get("unit_slot_data", []), int(bar_payload.get("dragging_index", -1)))
+	deploy_bar.update_support_slots(bar_payload.get("support_slot_data", []), int(bar_payload.get("selected_support_index", -1)))
 
 func _get_player_deploy_option_state(option: DeployOption) -> Dictionary:
-	if current_state != GameEnums.BattleState.PREP:
-		return {"status": "UNAVAILABLE", "reason": "deploy so esta disponivel no PREP", "available": false}
-	if option == null or option.unit_data == null:
-		return {"status": "UNAVAILABLE", "reason": "dados da unidade ausentes", "available": false}
-	if option.used:
-		return {"status": "USED", "reason": "slot ja foi usado nesta rodada", "available": false}
-	var effective_cost: int = option.unit_data.get_effective_cost()
-	if gold_current < effective_cost:
-		return {
-			"status": "NO GOLD",
-			"reason": "custo %d > ouro %d" % [effective_cost, gold_current],
-			"available": false,
-		}
-	if not _has_valid_player_deploy_target(option):
-		return {"status": "UNAVAILABLE", "reason": "nenhuma celula valida do jogador disponivel", "available": false}
-	return {"status": "READY", "reason": "", "available": true}
+	return prep_helper.get_player_deploy_option_state(
+		current_state,
+		GameEnums.BattleState.PREP,
+		gold_current,
+		option,
+		Callable(self, "_has_valid_player_deploy_target")
+	)
 
 func _get_player_support_option_state(option: SupportOption) -> Dictionary:
-	if current_state != GameEnums.BattleState.PREP:
-		return {"status": "UNAVAILABLE", "reason": "supports so estao disponiveis no PREP", "available": false}
-	if option == null or option.card_data == null:
-		return {"status": "UNAVAILABLE", "reason": "dados do support ausentes", "available": false}
-	if option.used:
-		return {"status": "USED", "reason": "support ja foi usado nesta rodada", "available": false}
-	if not _has_valid_support_target(option.card_data):
-		return {
-			"status": "UNAVAILABLE",
-			"reason": "nenhum alvo valido para %s" % option.card_data.display_name,
-			"available": false,
-		}
-	return {"status": "READY", "reason": "", "available": true}
+	return prep_helper.get_player_support_option_state(
+		current_state,
+		GameEnums.BattleState.PREP,
+		option,
+		Callable(self, "_has_valid_support_target")
+	)
 
 func _has_valid_player_deploy_target(option: DeployOption) -> bool:
-	if board_grid == null or option == null or option.unit_data == null:
+	if board_grid == null:
 		return false
-
-	for y in range(BattleConfig.BOARD_HEIGHT):
-		for x in range(BattleConfig.BOARD_WIDTH):
-			var coord := Vector2i(x, y)
-			if not board_grid.is_coord_in_team_zone(coord, GameEnums.TeamSide.PLAYER):
-				continue
-			if bool(_can_deploy_option_to_coord(option, coord).get("ok", false)):
-				return true
-	return false
+	return prep_helper.has_valid_player_deploy_target(
+		BattleConfig.BOARD_WIDTH,
+		BattleConfig.BOARD_HEIGHT,
+		Callable(self, "_can_deploy_option_to_coord"),
+		option
+	)
 
 func _has_valid_support_target(card_data: CardData) -> bool:
-	if card_data == null:
-		return false
-	if _support_card_is_instant(card_data):
-		return true
-	return not _get_valid_support_target_coords(card_data).is_empty()
+	return prep_helper.has_valid_support_target(
+		card_data,
+		Callable(self, "_support_card_is_instant"),
+		Callable(self, "_get_valid_support_target_coords")
+	)
 
 func _count_ready_player_deploy_slots() -> int:
-	var count: int = 0
-	for option in player_deploy_pool:
-		if bool(_get_player_deploy_option_state(option).get("available", false)):
-			count += 1
-	return count
+	return prep_helper.count_ready_player_deploy_slots(
+		player_deploy_pool,
+		Callable(self, "_get_player_deploy_option_state")
+	)
 
 func _player_has_ready_deploy_slots() -> bool:
-	return _count_ready_player_deploy_slots() > 0
+	return prep_helper.player_has_ready_deploy_slots(
+		player_deploy_pool,
+		Callable(self, "_get_player_deploy_option_state")
+	)
 
 func _log_loaded_deck(label: String, deck_data: DeckData) -> void:
 	if deck_data == null:
@@ -2401,6 +2752,9 @@ func _load_card_data(path: String) -> CardData:
 	push_warning("BattleManager: failed to load CardData at %s" % path)
 	return null
 
+func _create_support_option(card_data: CardData, card_path: String) -> SupportOption:
+	return SupportOption.new(card_data, card_path)
+
 func _build_player_deploy_pool() -> void:
 	player_deploy_pool.clear()
 	if player_deck == null:
@@ -2441,16 +2795,17 @@ func _build_player_support_pool() -> void:
 	if local_player == null:
 		return
 
-	var invalid_owned_paths: Array[String] = []
-	for path in local_player.get_owned_card_paths():
-		var card_data: CardData = _load_card_data(path)
-		if card_data == null:
-			invalid_owned_paths.append(path)
-			continue
-		var support_option: SupportOption = SupportOption.new(card_data, path)
-		support_option.used = false
-		player_support_pool.append(support_option)
+	var support_pool_result: Dictionary = prep_helper.build_support_pool(
+		local_player.get_owned_card_paths(),
+		Callable(self, "_load_card_data"),
+		Callable(self, "_create_support_option")
+	)
+	for support_option in support_pool_result.get("support_pool", []):
+		player_support_pool.append(support_option as SupportOption)
 
+	var invalid_owned_paths: Array[String] = []
+	for invalid_path in support_pool_result.get("invalid_owned_paths", []):
+		invalid_owned_paths.append(str(invalid_path))
 	if not invalid_owned_paths.is_empty():
 		print("SHOP_DEBUG invalid_owned_cards=[%s]" % _join_strings(invalid_owned_paths))
 
@@ -2509,15 +2864,10 @@ func try_open_card_shop_for_round(round_number: int) -> bool:
 	_clear_support_selection(false)
 	_set_input_locked(true)
 
-	var option_entries: Array[Dictionary] = []
-	for card_path in pending_card_shop_paths:
-		var card_data: CardData = _load_card_data(card_path)
-		if card_data == null:
-			continue
-		option_entries.append({
-			"card_path": card_path,
-			"card_data": card_data,
-		})
+	var option_entries: Array[Dictionary] = prep_helper.build_card_shop_option_entries(
+		pending_card_shop_paths,
+		Callable(self, "_load_card_data")
+	)
 
 	if option_entries.is_empty():
 		card_shop_open = false
@@ -2581,75 +2931,15 @@ func _on_card_shop_option_selected(card_path: String) -> void:
 		print("SHOP: carta ja existia no inventario da partida")
 
 func _build_local_card_shop_offer_details(round_number: int) -> Dictionary:
-	var details: Dictionary = lobby_manager.build_card_shop_offer_details(LOCAL_PLAYER_ID, round_number, 2)
-	var offer_paths: Array[String] = details.get("offer_paths", []).duplicate()
-	if not offer_paths.is_empty():
-		return details
-
-	lobby_manager.set_player_deck_path(LOCAL_PLAYER_ID, _selected_player_deck_path(), false)
-	details = lobby_manager.build_card_shop_offer_details(LOCAL_PLAYER_ID, round_number, 2)
-	offer_paths = details.get("offer_paths", []).duplicate()
-	if not offer_paths.is_empty():
-		details["reason"] = "deck_resynced"
-		return details
-
-	var local_player: MatchPlayerState = _local_player_state()
-	if local_player == null or player_deck == null:
-		details["reason"] = "missing_local_player_or_player_deck"
-		return details
-
-	var fallback_paths: Array[String] = []
-	var raw_pool_paths: Array[String] = []
-	var valid_pool_paths: Array[String] = []
-	var invalid_pool_paths: Array[String] = []
-	for card_path in player_deck.card_pool_paths:
-		var resolved_path: String = str(card_path)
-		if resolved_path.is_empty():
-			continue
-		if raw_pool_paths.has(resolved_path):
-			continue
-		raw_pool_paths.append(resolved_path)
-		var card_data: CardData = _load_card_data(resolved_path)
-		if card_data == null:
-			invalid_pool_paths.append(resolved_path)
-			continue
-		valid_pool_paths.append(resolved_path)
-		if local_player.has_owned_card_path(resolved_path):
-			continue
-		fallback_paths.append(resolved_path)
-	fallback_paths.sort()
-	raw_pool_paths.sort()
-	valid_pool_paths.sort()
-	invalid_pool_paths.sort()
-	if fallback_paths.size() > 2:
-		fallback_paths.resize(2)
-
-	details["offer_paths"] = fallback_paths
-	details["available_paths"] = fallback_paths.duplicate()
-	details["raw_card_pool_paths"] = raw_pool_paths.duplicate()
-	details["valid_card_pool_paths"] = valid_pool_paths.duplicate()
-	details["invalid_card_pool_paths"] = invalid_pool_paths.duplicate()
-	details["card_pool_paths"] = raw_pool_paths.duplicate()
-	details["card_pool_count"] = raw_pool_paths.size()
-	details["valid_card_pool_count"] = valid_pool_paths.size()
-	if not fallback_paths.is_empty():
-		if fallback_paths.size() < 2:
-			details["reason"] = "fallback_insufficient_unique_cards"
-		else:
-			details["reason"] = "fallback_used"
-		return details
-
-	if valid_pool_paths.size() > 2:
-		valid_pool_paths.resize(2)
-	details["offer_paths"] = valid_pool_paths
-	details["available_paths"] = valid_pool_paths.duplicate()
-	if valid_pool_paths.is_empty():
-		details["reason"] = "fallback_no_valid_card_resources"
-	elif valid_pool_paths.size() < 2:
-		details["reason"] = "fallback_reused_owned_valid_cards_partial"
-	else:
-		details["reason"] = "fallback_reused_owned_valid_cards"
-	return details
+	return prep_helper.build_local_card_shop_offer_details(
+		lobby_manager,
+		LOCAL_PLAYER_ID,
+		round_number,
+		player_deck,
+		_selected_player_deck_path(),
+		_local_player_state(),
+		Callable(self, "_load_card_data")
+	)
 
 func _mark_pool_used_from_living_player_units() -> void:
 	_mark_pool_used_from_living_team_units(player_deploy_pool, GameEnums.TeamSide.PLAYER)
@@ -2718,6 +3008,7 @@ func _spawn_roster_unit(
 		is_master,
 		resolved_home_coord
 	)
+	_apply_persistent_master_promotion_bonus(state)
 	if not board_grid.spawn_unit(state):
 		push_warning("BattleManager: failed to spawn %s at %s" % [unit_data.id, spawn_coord])
 		return null
@@ -2885,37 +3176,6 @@ func _on_support_slot_right_clicked(slot_index: int) -> void:
 	inspected_support_index = slot_index
 	_refresh_inspected_unit_panel()
 
-func _select_deploy_slot(index: int) -> void:
-	if card_shop_open:
-		return
-	if _block_observer_input("deploy_hotkey"):
-		return
-	if index < 0 or index >= player_deploy_pool.size():
-		print("Selecao de deploy bloqueada: slot %d indisponivel (pool=%d)" % [index + 1, player_deploy_pool.size()])
-		return
-
-	var option: DeployOption = player_deploy_pool[index]
-	var state: Dictionary = _get_player_deploy_option_state(option)
-	if not bool(state.get("available", false)):
-		print("Selecao de deploy bloqueada: slot %d %s (%s)" % [
-			index + 1,
-			str(state.get("status", "UNAVAILABLE")).to_lower(),
-			str(state.get("reason", "indisponivel")),
-		])
-		return
-
-	_clear_support_selection(false)
-	selected_deploy_index = index
-	_set_selected_prep_unit(null)
-	_refresh_deploy_bar()
-	_emit_hud_update()
-	print("Deploy selecionado: slot=%d unidade=%s custo=%d ouro=%d" % [
-		index + 1,
-		option.unit_data.id,
-		option.unit_data.get_effective_cost(),
-		gold_current,
-	])
-
 func _select_support_slot(index: int) -> void:
 	if card_shop_open:
 		return
@@ -3005,7 +3265,8 @@ func _can_deploy_option_to_coord(option: DeployOption, coord: Vector2i) -> Dicti
 		return {"ok": false, "reason": "alvo fora da zona do jogador"}
 	if not board_grid.is_cell_free(coord):
 		return {"ok": false, "reason": "celula alvo ocupada"}
-	if _count_non_master_units(GameEnums.TeamSide.PLAYER) >= BattleConfig.MAX_FIELD_UNITS:
+	var player_field_limit: int = _get_team_field_unit_limit(GameEnums.TeamSide.PLAYER)
+	if _count_non_master_units(GameEnums.TeamSide.PLAYER) >= player_field_limit:
 		return {"ok": false, "reason": "limite de unidades do jogador atingido"}
 	var effective_cost: int = option.unit_data.get_effective_cost()
 	if gold_current < effective_cost:
@@ -3019,7 +3280,8 @@ func _can_enemy_deploy_option_to_coord(option: DeployOption, coord: Vector2i) ->
 		return {"ok": false, "reason": "alvo fora da zona inimiga"}
 	if not board_grid.is_cell_free(coord):
 		return {"ok": false, "reason": "celula alvo ocupada"}
-	if _count_non_master_units(GameEnums.TeamSide.ENEMY) >= BattleConfig.MAX_FIELD_UNITS:
+	var enemy_field_limit: int = _get_team_field_unit_limit(GameEnums.TeamSide.ENEMY)
+	if _count_non_master_units(GameEnums.TeamSide.ENEMY) >= enemy_field_limit:
 		return {"ok": false, "reason": "limite de unidades inimigas atingido"}
 	var effective_cost: int = option.unit_data.get_effective_cost()
 	if enemy_gold_current < effective_cost:
@@ -3048,6 +3310,7 @@ func _deploy_slot_to_coord(slot_index: int, coord: Vector2i) -> bool:
 		false,
 		coord
 	)
+	_apply_persistent_master_promotion_bonus(state)
 	if not board_grid.spawn_unit(state):
 		print("Deploy bloqueado: falha ao criar unidade em %s" % coord)
 		return false
@@ -3088,6 +3351,7 @@ func _deploy_enemy_slot_to_coord(slot_index: int, coord: Vector2i) -> bool:
 		false,
 		coord
 	)
+	_apply_persistent_master_promotion_bonus(state)
 	if not board_grid.spawn_unit(state):
 		return false
 
@@ -3112,11 +3376,11 @@ func _auto_prepare_enemy_board() -> void:
 		enemy_deploy_pool,
 		enemy_gold_current,
 		_count_non_master_units(GameEnums.TeamSide.ENEMY),
-		BattleConfig.MAX_FIELD_UNITS,
+		_get_team_field_unit_limit(GameEnums.TeamSide.ENEMY),
 		current_round
 	)
 	var deploy_orders: Array[Dictionary] = deploy_plan.get("orders", [])
-	var enemy_field_limit: int = int(deploy_plan.get("field_limit", BattleConfig.MAX_FIELD_UNITS))
+	var enemy_field_limit: int = int(deploy_plan.get("field_limit", _get_team_field_unit_limit(GameEnums.TeamSide.ENEMY)))
 	var enemy_gold_budget: int = int(deploy_plan.get("gold_budget", enemy_gold_current))
 	if bool(deploy_plan.get("fairness_active", false)):
 		print("Justica do PREP inimigo ativa: rodada=%d limite_de_campo=%d ouro_efetivo=%d" % [
@@ -3213,7 +3477,7 @@ func _build_bot_card_unit_entries(team_side: int) -> Array[Dictionary]:
 			"magic_attack": unit_state.get_magic_attack_value(),
 			"physical_defense": unit_state.get_physical_defense_value(),
 			"magic_defense": unit_state.get_magic_defense_value(),
-			"max_hp": unit_state.unit_data.max_hp,
+			"max_hp": unit_state.get_max_hp_value(),
 			"current_hp": unit_state.current_hp,
 		})
 	return entries
@@ -3255,7 +3519,7 @@ func _auto_pick_support_target_for_team(card_data: CardData, owner_team_side: in
 					score -= 25
 			GameEnums.SupportCardEffectType.DEATH_MANA_PACT:
 				if unit_state.unit_data != null:
-					score += unit_state.unit_data.max_hp * 4
+					score += unit_state.get_max_hp_value() * 4
 				if unit_state.is_master:
 					score -= 18
 			GameEnums.SupportCardEffectType.PHYSICAL_DEFENSE_RATIO_BUFF:
@@ -3629,7 +3893,11 @@ func _refresh_targeting_preview() -> void:
 	if not board_grid:
 		return
 	if selected_support_index < 0 or selected_support_index >= player_support_pool.size():
-		board_grid.clear_target_highlights()
+		var promotion_targets: Array[Vector2i] = _get_pending_local_promotion_target_coords()
+		if promotion_targets.is_empty():
+			board_grid.clear_target_highlights()
+		else:
+			board_grid.set_target_highlights(promotion_targets)
 		return
 
 	var option: SupportOption = player_support_pool[selected_support_index]
@@ -3763,6 +4031,10 @@ func _clear_round_limited_tokens() -> void:
 			continue
 		remaining_units.append(unit_state)
 	runtime_units = remaining_units
+
+# -----------------------------------------------------------------------------
+# 12. Tactical decisions, targeting, movement and combat resolution
+# -----------------------------------------------------------------------------
 
 func _trigger_battle_turn_effects() -> void:
 	battle_turn_index += 1
@@ -4187,11 +4459,36 @@ func _record_local_round_result(winner_team: int, damage_value: int) -> void:
 		]
 		local_damage_taken = damage_value
 
+	var local_master_survived: bool = _find_team_master(GameEnums.TeamSide.PLAYER) != null
+	var opponent_master_survived: bool = _find_team_master(GameEnums.TeamSide.ENEMY) != null
+
 	local_player.record_round_result(current_round, local_result_text, winner_team == GameEnums.TeamSide.PLAYER, local_damage_taken)
+	var local_progression_result: Dictionary = local_player.apply_master_round_progression(
+		winner_team == GameEnums.TeamSide.PLAYER,
+		local_damage_taken > 0,
+		local_master_survived
+	)
 	local_player.eliminated = local_player.current_life <= 0
 	local_player.set_round_phase("RESULTADO")
+	print("MESTRE XP LOCAL: %s | %s" % [
+		local_player.display_name,
+		local_player.get_master_feedback_text(),
+	])
+	if not local_progression_result.is_empty():
+		print("MESTRE XP DETALHE player=%s xp_total=%d nivel=%d capacidade=%d promocoes_pendentes=%d" % [
+			local_player.display_name,
+			int(local_progression_result.get("xp_total", local_player.get_master_xp_total())),
+			local_player.get_master_level(),
+			local_player.get_field_capacity_total(),
+			local_player.get_pending_master_promotion_count(),
+		])
 	if opponent_player != null:
 		opponent_player.record_round_result(current_round, opponent_result_text, winner_team == GameEnums.TeamSide.ENEMY, opponent_damage_taken)
+		opponent_player.apply_master_round_progression(
+			winner_team == GameEnums.TeamSide.ENEMY,
+			opponent_damage_taken > 0,
+			opponent_master_survived
+		)
 		opponent_player.eliminated = opponent_player.current_life <= 0
 		opponent_player.set_round_phase("RESULTADO")
 
@@ -4429,7 +4726,7 @@ func _find_support_priority_ally(source: BattleUnitState) -> BattleUnitState:
 	if source == null:
 		return null
 	var injured_ally: BattleUnitState = _find_most_injured_ally(source, false)
-	if injured_ally != null and injured_ally.unit_data != null and injured_ally.current_hp < injured_ally.unit_data.max_hp:
+	if injured_ally != null and injured_ally.unit_data != null and injured_ally.current_hp < injured_ally.get_max_hp_value():
 		return injured_ally
 	return _find_ally_with_highest_attack_value(source.team_side, source)
 
@@ -4617,7 +4914,7 @@ func _try_cast_unit_skill(acting_unit: BattleUnitState) -> bool:
 				return false
 			if acting_unit.actor:
 				acting_unit.actor.on_skill_cast()
-			var self_damage: int = maxi(1, int(round(float(acting_unit.unit_data.max_hp) * skill_data.self_health_cost_ratio)))
+			var self_damage: int = maxi(1, int(round(float(acting_unit.get_max_hp_value()) * skill_data.self_health_cost_ratio)))
 			acting_unit.take_damage(self_damage)
 			var granted_mana: int = int(round(float(mana_target.get_mana_max()) * skill_data.ally_mana_grant_ratio))
 			var mana_gained: int = mana_target.gain_mana(granted_mana)
@@ -4871,8 +5168,8 @@ func _try_cast_unit_skill(acting_unit: BattleUnitState) -> bool:
 			if acting_unit.actor:
 				acting_unit.actor.on_skill_cast()
 			var missing_ratio: float = 0.0
-			if acting_unit.unit_data != null and acting_unit.unit_data.max_hp > 0:
-				missing_ratio = 1.0 - (float(acting_unit.current_hp) / float(acting_unit.unit_data.max_hp))
+			if acting_unit.unit_data != null and acting_unit.get_max_hp_value() > 0:
+				missing_ratio = 1.0 - (float(acting_unit.current_hp) / float(acting_unit.get_max_hp_value()))
 			var bloody_multiplier: float = skill_data.physical_power_multiplier + missing_ratio
 			var bloody_result: Dictionary = _calculate_damage_result(
 				acting_unit,
@@ -4987,7 +5284,7 @@ func _try_cast_unit_skill(acting_unit: BattleUnitState) -> bool:
 				return false
 			if acting_unit.actor:
 				acting_unit.actor.on_skill_cast()
-			var ratio_heal_amount: int = int(round(float(ratio_heal_target.unit_data.max_hp) * skill_data.heal_ratio))
+			var ratio_heal_amount: int = int(round(float(ratio_heal_target.get_max_hp_value()) * skill_data.heal_ratio))
 			var ratio_healed: int = ratio_heal_target.heal(maxi(1, ratio_heal_amount))
 			if ratio_heal_target.actor and ratio_healed > 0:
 				ratio_heal_target.actor.on_heal()
@@ -5102,7 +5399,7 @@ func _find_most_injured_ally(source: BattleUnitState, allow_self_as_fallback: bo
 		if candidate.unit_data == null:
 			continue
 
-		var missing_hp: int = candidate.unit_data.max_hp - candidate.current_hp
+		var missing_hp: int = candidate.get_max_hp_value() - candidate.current_hp
 		if missing_hp > biggest_missing_hp:
 			biggest_missing_hp = missing_hp
 			best_ally = candidate
@@ -6627,8 +6924,8 @@ func _cast_execute_magic_skill(acting_unit: BattleUnitState, skill_data: SkillDa
 		acting_unit.actor.on_skill_cast()
 
 	var force_execution_critical: bool = false
-	if target.unit_data != null and target.unit_data.max_hp > 0:
-		force_execution_critical = float(target.current_hp) / float(target.unit_data.max_hp) <= 0.30
+	if target.unit_data != null and target.get_max_hp_value() > 0:
+		force_execution_critical = float(target.current_hp) / float(target.get_max_hp_value()) <= 0.30
 
 	var result: Dictionary = _calculate_damage_result(
 		acting_unit,
@@ -6728,7 +7025,7 @@ func _spawn_necromancer_skeletons(caster: BattleUnitState, skill_data: SkillData
 		)
 		if summon_state == null:
 			continue
-		summon_state.unit_data.max_hp = maxi(1, int(round(float(caster.unit_data.max_hp) * summon_ratio)))
+		summon_state.unit_data.max_hp = maxi(1, int(round(float(caster.get_max_hp_value()) * summon_ratio)))
 		summon_state.unit_data.physical_attack = maxi(1, int(round(float(caster.get_physical_attack_value()) * summon_ratio)))
 		summon_state.unit_data.magic_attack = maxi(0, int(round(float(caster.get_magic_attack_value()) * summon_ratio)))
 		summon_state.unit_data.physical_defense = maxi(0, int(round(float(caster.get_physical_defense_value()) * summon_ratio)))
@@ -6940,6 +7237,10 @@ func _refresh_actor_state(unit_state: BattleUnitState) -> void:
 			unit_state.actor.set_overlay_suppressed(true)
 	_refresh_inspected_unit_panel()
 
+# -----------------------------------------------------------------------------
+# 13. HUD inspect and local visual focus
+# -----------------------------------------------------------------------------
+
 func _clear_inspected_context() -> void:
 	inspected_unit = null
 	inspected_deploy_index = -1
@@ -7139,6 +7440,12 @@ func _on_observed_board_unit_right_clicked(unit_state: BattleUnitState) -> void:
 func _on_board_empty_right_clicked() -> void:
 	_clear_inspected_context()
 
+# -----------------------------------------------------------------------------
+# 14. Observer and live-table bridge
+# -----------------------------------------------------------------------------
+# Future-facing support stays here, but it does not override BattleManager as
+# the owner of the local demo loop.
+
 func _on_player_sidebar_entry_pressed(player_id: String) -> void:
 	if card_shop_open:
 		return
@@ -7274,6 +7581,10 @@ func _exit_observer_mode_if_needed(clear_hud: bool) -> void:
 func _apply_local_board_view_for_phase() -> void:
 	var target_view_mode: int = GameEnums.BoardViewMode.SELF_ONLY if current_state == GameEnums.BattleState.PREP else GameEnums.BoardViewMode.FULL_BATTLE
 	_apply_board_view_mode(target_view_mode, true)
+
+# -----------------------------------------------------------------------------
+# 15. General helpers and end-state checks
+# -----------------------------------------------------------------------------
 
 func _append_unique(target_array: Array[String], value: String) -> void:
 	if not target_array.has(value):

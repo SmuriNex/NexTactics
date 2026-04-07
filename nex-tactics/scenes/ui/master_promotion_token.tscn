@@ -1,0 +1,152 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/master_promotion_token.gd" id="1_master_promotion_token"]
+
+[node name="MasterPromotionToken" type="Control"]
+visible = false
+offset_left = 328.0
+offset_top = 8.0
+offset_right = 468.0
+offset_bottom = 142.0
+mouse_filter = 2
+script = ExtResource("1_master_promotion_token")
+
+[node name="RestTokenPanel" type="PanelContainer" parent="."]
+offset_left = 22.0
+offset_top = 0.0
+offset_right = 118.0
+offset_bottom = 96.0
+mouse_filter = 0
+
+[node name="CenterContainer" type="CenterContainer" parent="RestTokenPanel"]
+layout_mode = 2
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="TokenVBox" type="VBoxContainer" parent="RestTokenPanel/CenterContainer"]
+layout_mode = 2
+theme_override_constants/separation = 0
+
+[node name="TitleLabel" type="Label" parent="RestTokenPanel/CenterContainer/TokenVBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 10
+text = "MESTRE"
+horizontal_alignment = 1
+
+[node name="GlyphLabel" type="Label" parent="RestTokenPanel/CenterContainer/TokenVBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 26
+text = "UP"
+horizontal_alignment = 1
+
+[node name="SubLabel" type="Label" parent="RestTokenPanel/CenterContainer/TokenVBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 10
+text = "PROMO"
+horizontal_alignment = 1
+
+[node name="RestBadgePanel" type="PanelContainer" parent="."]
+offset_left = 82.0
+offset_top = 2.0
+offset_right = 130.0
+offset_bottom = 30.0
+mouse_filter = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="RestBadgePanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 4
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 4
+
+[node name="CountLabel" type="Label" parent="RestBadgePanel/MarginContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 11
+text = "x1"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="RestHintLabel" type="Label" parent="."]
+offset_top = 102.0
+offset_right = 140.0
+offset_bottom = 132.0
+theme_override_font_sizes/font_size = 10
+text = "Arraste"
+horizontal_alignment = 1
+autowrap_mode = 3
+
+[node name="DragPreview" type="Control" parent="."]
+visible = false
+top_level = true
+offset_right = 140.0
+offset_bottom = 132.0
+mouse_filter = 2
+
+[node name="DragTokenPanel" type="PanelContainer" parent="DragPreview"]
+offset_left = 22.0
+offset_right = 118.0
+offset_bottom = 96.0
+mouse_filter = 2
+
+[node name="CenterContainer" type="CenterContainer" parent="DragPreview/DragTokenPanel"]
+layout_mode = 2
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="TokenVBox" type="VBoxContainer" parent="DragPreview/DragTokenPanel/CenterContainer"]
+layout_mode = 2
+theme_override_constants/separation = 0
+
+[node name="TitleLabel" type="Label" parent="DragPreview/DragTokenPanel/CenterContainer/TokenVBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 10
+text = "PROMO"
+horizontal_alignment = 1
+
+[node name="GlyphLabel" type="Label" parent="DragPreview/DragTokenPanel/CenterContainer/TokenVBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 26
+text = "UP"
+horizontal_alignment = 1
+
+[node name="SubLabel" type="Label" parent="DragPreview/DragTokenPanel/CenterContainer/TokenVBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 10
+text = "MESTRE"
+horizontal_alignment = 1
+
+[node name="DragBadgePanel" type="PanelContainer" parent="DragPreview"]
+offset_left = 82.0
+offset_top = 2.0
+offset_right = 130.0
+offset_bottom = 30.0
+mouse_filter = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="DragPreview/DragBadgePanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 4
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 4
+
+[node name="CountLabel" type="Label" parent="DragPreview/DragBadgePanel/MarginContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 11
+text = "x1"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="DragHintLabel" type="Label" parent="DragPreview"]
+offset_top = 102.0
+offset_right = 140.0
+offset_bottom = 132.0
+theme_override_font_sizes/font_size = 10
+text = "Alvo invalido"
+horizontal_alignment = 1
+autowrap_mode = 3

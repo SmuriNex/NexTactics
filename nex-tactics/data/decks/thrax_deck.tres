@@ -6,7 +6,7 @@
 script = ExtResource("1_deck_data")
 id = "thrax"
 display_name = "Deck do Rei Thrax"
-description = "Deck focado em pressao fisica e escalada economica. Quanto mais ouro guardado, mais perigoso fica o exercito."
+description = "Reino humano disciplinado, ganancioso e expansionista. Vence por comando militar, conquista frontal e crenca na supremacia humana."
 master_data_path = "res://data/units/thrax/thrax_master.tres"
-unit_pool_paths = PackedStringArray("res://data/units/thrax/eagle_scout.tres", "res://data/units/thrax/umbral_panther.tres", "res://data/units/thrax/elite_guard.tres", "res://data/units/thrax/ironhide_minotaur.tres", "res://data/units/thrax/arena_gladiator.tres", "res://data/units/thrax/clan_berserker.tres", "res://data/units/thrax/alpha_werewolf.tres", "res://data/units/thrax/war_bear.tres", "res://data/units/thrax/tax_collector.tres", "res://data/units/thrax/battle_priest.tres", "res://data/units/thrax/horned_shaman.tres", "res://data/units/thrax/war_drummer.tres")
+unit_pool_paths = PackedStringArray("res://data/units/thrax/eagle_scout.tres", "res://data/units/thrax/elite_guard.tres", "res://data/units/thrax/arena_gladiator.tres", "res://data/units/thrax/clan_berserker.tres", "res://data/units/thrax/tax_collector.tres", "res://data/units/thrax/battle_priest.tres", "res://data/units/thrax/war_drummer.tres", "res://data/units/thrax/iron_vanguard.tres", "res://data/units/thrax/leonidas_lancer.tres", "res://data/units/thrax/tribute_raider.tres", "res://data/units/thrax/tax_falconer.tres")
 card_pool_paths = PackedStringArray("res://data/cards/thrax/toque_de_midas.tres", "res://data/cards/thrax/saque_de_tributo.tres", "res://data/cards/thrax/armadura_de_guerra.tres", "res://data/cards/thrax/lanca_de_leonidas.tres", "res://data/cards/thrax/tornado.tres")

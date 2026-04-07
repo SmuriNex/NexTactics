@@ -1,5 +1,13 @@
 extends RefCounted
 class_name CombatInstance
+
+# Structural role:
+# Runtime combat model for live tables and observer support.
+# It is preserved as future-facing infrastructure, but it is not the source of
+# truth for the local player's battle flow in the current demo cut.
+# When it resolves a result, it should be understood as settling secondary
+# tables and not as replacing BattleManager for the local demo.
+
 const BattleConfigScript := preload("res://autoload/battle_config.gd")
 
 const MAX_RECENT_EVENTS := 16
@@ -943,6 +951,9 @@ func _team_hp_total(team_side: int) -> int:
 		total_hp += unit_state.current_hp
 	return total_hp
 
+# Live-table support ownership:
+# This resolves the result of an observed/background table. It does not own the
+# local playable battle loop and should only feed match-state consequences.
 func _finalize_result() -> void:
 	if applied_result:
 		return

@@ -1,0 +1,138 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/start_screen.gd" id="1_start_screen"]
+
+[node name="StartScreen" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_start_screen")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.05, 0.06, 0.08, 1)
+
+[node name="BackgroundMargin" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 56
+theme_override_constants/margin_top = 48
+theme_override_constants/margin_right = 56
+theme_override_constants/margin_bottom = 48
+
+[node name="MainColumn" type="VBoxContainer" parent="BackgroundMargin"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 24
+
+[node name="HeaderColumn" type="VBoxContainer" parent="BackgroundMargin/MainColumn"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="StudioLabel" type="Label" parent="BackgroundMargin/MainColumn/HeaderColumn"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+modulate = Color(0.79, 0.83, 0.9, 1)
+text = "NexPoint"
+
+[node name="TitleLabel" type="Label" parent="BackgroundMargin/MainColumn/HeaderColumn"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 54
+text = "Warcrown"
+
+[node name="SubtitleLabel" type="Label" parent="BackgroundMargin/MainColumn/HeaderColumn"]
+layout_mode = 2
+autowrap_mode = 3
+theme_override_font_sizes/font_size = 18
+modulate = Color(0.82, 0.86, 0.92, 1)
+text = "Auto-battler tatico local-first."
+
+[node name="DeckStatusPanel" type="PanelContainer" parent="BackgroundMargin/MainColumn"]
+custom_minimum_size = Vector2(0, 180)
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="MarginContainer" type="MarginContainer" parent="BackgroundMargin/MainColumn/DeckStatusPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 24
+theme_override_constants/margin_top = 24
+theme_override_constants/margin_right = 24
+theme_override_constants/margin_bottom = 24
+
+[node name="DeckStatusColumn" type="VBoxContainer" parent="BackgroundMargin/MainColumn/DeckStatusPanel/MarginContainer"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="DeckStatusTitleLabel" type="Label" parent="BackgroundMargin/MainColumn/DeckStatusPanel/MarginContainer/DeckStatusColumn"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+modulate = Color(0.79, 0.82, 0.89, 1)
+text = "Deck Atual"
+
+[node name="DeckNameLabel" type="Label" parent="BackgroundMargin/MainColumn/DeckStatusPanel/MarginContainer/DeckStatusColumn"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 30
+text = "Nenhum deck escolhido"
+
+[node name="MasterNameLabel" type="Label" parent="BackgroundMargin/MainColumn/DeckStatusPanel/MarginContainer/DeckStatusColumn"]
+layout_mode = 2
+autowrap_mode = 3
+theme_override_font_sizes/font_size = 18
+modulate = Color(0.86, 0.88, 0.93, 1)
+text = "Abra DECK para conhecer os tres exercitos."
+
+[node name="DeckSummaryLabel" type="Label" parent="BackgroundMargin/MainColumn/DeckStatusPanel/MarginContainer/DeckStatusColumn"]
+layout_mode = 2
+autowrap_mode = 3
+theme_override_font_sizes/font_size = 16
+modulate = Color(0.74, 0.78, 0.86, 1)
+text = "PLAY fica liberado assim que um deck for selecionado."
+
+[node name="ActionsRow" type="HBoxContainer" parent="BackgroundMargin/MainColumn"]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="PlayButton" type="Button" parent="BackgroundMargin/MainColumn/ActionsRow"]
+custom_minimum_size = Vector2(0, 62)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 24
+text = "PLAY"
+
+[node name="DeckButton" type="Button" parent="BackgroundMargin/MainColumn/ActionsRow"]
+custom_minimum_size = Vector2(0, 62)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 24
+text = "DECK"
+
+[node name="MenuButton" type="Button" parent="BackgroundMargin/MainColumn/ActionsRow"]
+custom_minimum_size = Vector2(0, 62)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 24
+text = "MENU"
+
+[node name="MessageLabel" type="Label" parent="BackgroundMargin/MainColumn"]
+layout_mode = 2
+autowrap_mode = 3
+theme_override_font_sizes/font_size = 16
+modulate = Color(0.88, 0.8, 0.58, 1)
+text = "Escolha um deck antes de iniciar."
+
+[node name="BottomSpacer" type="Control" parent="BackgroundMargin/MainColumn"]
+layout_mode = 2
+size_flags_vertical = 3

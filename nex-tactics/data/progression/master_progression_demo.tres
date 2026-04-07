@@ -1,0 +1,110 @@
+[gd_resource type="Resource" script_class="MasterProgressionConfig" format=3 uid="uid://bctlyhqaecpyi"]
+
+[ext_resource type="Script" uid="uid://d3fhigq5216tc" path="res://scripts/data/master_progression_config.gd" id="1_cfg"]
+[ext_resource type="Script" uid="uid://dqd8ercg1tir3" path="res://scripts/data/master_level_rule.gd" id="2_level"]
+[ext_resource type="Script" uid="uid://8vs4iktpll7b" path="res://scripts/data/master_promotion_rule.gd" id="3_promo"]
+
+[sub_resource type="Resource" id="Level1"]
+script = ExtResource("2_level")
+
+[sub_resource type="Resource" id="Level2"]
+script = ExtResource("2_level")
+level = 2
+xp_total_required = 3
+field_capacity_total = 5
+
+[sub_resource type="Resource" id="Level3"]
+script = ExtResource("2_level")
+level = 3
+xp_total_required = 8
+field_capacity_total = 5
+grants_promotion = true
+
+[sub_resource type="Resource" id="Level4"]
+script = ExtResource("2_level")
+level = 4
+xp_total_required = 13
+field_capacity_total = 6
+
+[sub_resource type="Resource" id="Level5"]
+script = ExtResource("2_level")
+level = 5
+xp_total_required = 18
+field_capacity_total = 6
+grants_promotion = true
+
+[sub_resource type="Resource" id="Level6"]
+script = ExtResource("2_level")
+level = 6
+xp_total_required = 24
+field_capacity_total = 7
+
+[sub_resource type="Resource" id="Level7"]
+script = ExtResource("2_level")
+level = 7
+xp_total_required = 31
+field_capacity_total = 7
+grants_promotion = true
+
+[sub_resource type="Resource" id="Level8"]
+script = ExtResource("2_level")
+level = 8
+xp_total_required = 39
+field_capacity_total = 8
+
+[sub_resource type="Resource" id="Level9"]
+script = ExtResource("2_level")
+level = 9
+xp_total_required = 47
+field_capacity_total = 9
+
+[sub_resource type="Resource" id="Level10"]
+script = ExtResource("2_level")
+level = 10
+xp_total_required = 56
+field_capacity_total = 9
+grants_promotion = true
+
+[sub_resource type="Resource" id="Level11"]
+script = ExtResource("2_level")
+level = 11
+xp_total_required = 66
+field_capacity_total = 9
+grants_promotion = true
+
+[sub_resource type="Resource" id="PromoAttacker"]
+script = ExtResource("3_promo")
+label = "Pressao"
+physical_attack_bonus = 2
+
+[sub_resource type="Resource" id="PromoTank"]
+script = ExtResource("3_promo")
+class_type = 1
+label = "Bastiao"
+hp_bonus = 12
+physical_defense_bonus = 1
+
+[sub_resource type="Resource" id="PromoSniper"]
+script = ExtResource("3_promo")
+class_type = 2
+label = "Precisao"
+physical_attack_bonus = 2
+
+[sub_resource type="Resource" id="PromoSupport"]
+script = ExtResource("3_promo")
+class_type = 3
+label = "Protecao"
+hp_bonus = 8
+magic_defense_bonus = 1
+
+[sub_resource type="Resource" id="PromoStealth"]
+script = ExtResource("3_promo")
+class_type = 4
+label = "Emboscada"
+physical_attack_bonus = 2
+
+[resource]
+script = ExtResource("1_cfg")
+recovery_loss_bonus_xp = 1
+level_rules = Array[ExtResource("2_level")]([SubResource("Level1"), SubResource("Level2"), SubResource("Level3"), SubResource("Level4"), SubResource("Level5"), SubResource("Level6"), SubResource("Level7"), SubResource("Level8"), SubResource("Level9"), SubResource("Level10"), SubResource("Level11")])
+promotion_rules = Array[ExtResource("3_promo")]([SubResource("PromoAttacker"), SubResource("PromoTank"), SubResource("PromoSniper"), SubResource("PromoSupport"), SubResource("PromoStealth")])

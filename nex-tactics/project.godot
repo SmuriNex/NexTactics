@@ -8,14 +8,18 @@
 
 config_version=5
 
+[GD-Sync]
+
+version="0.14"
+
 [animation]
 
 compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 [application]
 
-config/name="NexTactics"
-run/main_scene="res://scenes/ui/deck_select_screen.tscn"
+config/name="Warcrown"
+run/main_scene="res://scenes/ui/start_screen.tscn"
 config/features=PackedStringArray("4.6", "GL Compatibility")
 config/icon="res://icon.svg"
 
@@ -25,6 +29,17 @@ BattleConfig="*res://autoload/battle_config.gd"
 GameData="*res://autoload/game_data.gd"
 GameDB="*res://autoload/game_db.gd"
 SignalBus="*res://autoload/signal_bus.gd"
+GDSync="*res://addons/GD-Sync/MultiplayerClient.gd"
+BeehaveGlobalMetrics="*uid://c3ktl6ontsdt7"
+BeehaveGlobalDebugger="*uid://bl3ma400hpvsh"
+SaveService="*uid://cvk10amou24uh"
+SaveManager="*uid://d1wmxv27ppc12"
+CG="*uid://di2oxtaq5vhmh"
+Talo="*uid://bpmdn8oc34pg7"
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/GD-Sync/plugin.cfg", "res://addons/MultiPlay/plugin.cfg", "res://addons/a_star_grid_map/plugin.cfg", "res://addons/beehave/plugin.cfg", "res://addons/gut/plugin.cfg", "res://addons/saveEngine/plugin.cfg", "res://addons/savestate/plugin.cfg", "res://addons/simple_cards/plugin.cfg", "res://addons/talo/plugin.cfg")
 
 [physics]
 
@@ -35,3 +50,7 @@ SignalBus="*res://autoload/signal_bus.gd"
 rendering_device/driver.windows="d3d12"
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
+
+[savestate]
+
+current_version=1

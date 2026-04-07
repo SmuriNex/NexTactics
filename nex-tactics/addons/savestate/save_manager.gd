@@ -17,7 +17,7 @@ signal load_requested()
 const FLAG_JSON: int = 1
 const FORMAT_VERSION: int = 1
 
-const SETTING_SCHEMA_VERSION := "savestate/current_version"
+const SETTING_SCHEMA_VERSION = "savestate/current_version"
 ## Reserved slot for [method set_value] / [method get_value] / [method persist]. Avoid using [code]slot_0[/code] for unrelated data, or call [method clear_kv_cache] first.
 const KV_SLOT_ID: StringName = &"slot_0"
 
@@ -56,11 +56,11 @@ func _register_live_edit_debugger_capture() -> void:
 
 
 func _on_debugger_message(message: StringName, data: Array) -> void:
-	var msg := str(message)
+	var msg = str(message)
 	if not msg.begins_with("savestate_pro:"):
 		return
-	var parts := msg.split(":", false, 2)
-	var cmd := parts[1] if parts.size() > 1 else ""
+	var parts = msg.split(":", false, 2)
+	var cmd = parts[1] if parts.size() > 1 else ""
 	if cmd == "apply_kv_patch":
 		var patch: Dictionary = {}
 		if data.size() >= 1 and data[0] is Dictionary:
@@ -84,7 +84,7 @@ func _apply_kv_patch(patch: Dictionary) -> void:
 func _register_reserved_kv_slot() -> void:
 	if _slots.has(KV_SLOT_ID):
 		return
-	var s := SaveSlot.new()
+	var s = SaveSlot.new()
 	s.slot_id = KV_SLOT_ID
 	s.file_base_name = "slot_0"
 	s.display_name = "KV Store"
@@ -122,8 +122,8 @@ func replace_kv_data(data: Dictionary) -> void:
 
 ## If [param main_save_path] is [code]user://.../slot_0.bin[/code], a sibling [code]slot_0.bin.bak[/code] replaces it. Used by the editor Restore button.
 func gather_saveable_snapshots() -> Dictionary:
-	var out := {}
-	var tree := get_tree()
+	var out = {}
+	var tree = get_tree()
 	if tree == null:
 		return out
 	for n in tree.get_nodes_in_group("savestate_saveable"):
@@ -140,14 +140,14 @@ func gather_saveable_snapshots() -> Dictionary:
 func persist_including_saveables() -> Error:
 	save_requested.emit()
 	_hydrate_kv_if_needed()
-	var merged := _kv_data.duplicate(true)
+	var merged = _kv_data.duplicate(true)
 	merged["__saveables"] = gather_saveable_snapshots()
 	return save_to_slot_sync(KV_SLOT_ID, merged)
 
 
 ## Loads slot data, emits [signal load_requested], applies [Saveable] snapshots under [code]__saveables[/code].
 func load_from_slot_and_apply_saveables(slot_id: StringName) -> Dictionary:
-	var inner := load_from_slot_sync(slot_id)
+	var inner = load_from_slot_sync(slot_id)
 	load_requested.emit()
 	var b: Variant = inner.get("__saveables", {})
 	if typeof(b) == TYPE_DICTIONARY:
@@ -156,7 +156,7 @@ func load_from_slot_and_apply_saveables(slot_id: StringName) -> Dictionary:
 
 
 func apply_saveables_from_bundle(bundle: Dictionary) -> void:
-	var tree := get_tree()
+	var tree = get_tree()
 	if tree == null:
 		return
 	for n in tree.get_nodes_in_group("savestate_saveable"):
@@ -175,13 +175,13 @@ func apply_saveables_from_bundle(bundle: Dictionary) -> void:
 
 ## Ensures a [SaveSlot] exists for [param file_base] (e.g. [code]slot_0[/code] for [code]slot_0.bin[/code]) and writes [param inner] payload.
 func write_inner_data_to_disk(path: String, inner: Dictionary) -> Error:
-	var fn := path.get_file()
+	var fn = path.get_file()
 	if fn.ends_with(".bak"):
 		fn = fn.trim_suffix(".bak")
-	var base := fn.get_basename()
+	var base = fn.get_basename()
 	if base.is_empty():
 		return ERR_INVALID_PARAMETER
-	var slot_id := StringName(base)
+	var slot_id = StringName(base)
 	ensure_slot_for_file_base(slot_id, base)
 	return save_to_slot_sync(slot_id, inner)
 
@@ -189,7 +189,7 @@ func write_inner_data_to_disk(path: String, inner: Dictionary) -> Error:
 func ensure_slot_for_file_base(slot_id: StringName, file_base: String) -> void:
 	if _slots.has(slot_id):
 		return
-	var s := SaveSlot.new()
+	var s = SaveSlot.new()
 	s.slot_id = slot_id
 	s.file_base_name = file_base
 	s.display_name = str(file_base)
@@ -197,11 +197,11 @@ func ensure_slot_for_file_base(slot_id: StringName, file_base: String) -> void:
 
 
 func restore_from_backup_file(main_save_path: String) -> Error:
-	var bak_path := main_save_path + ".bak"
+	var bak_path = main_save_path + ".bak"
 	if not FileAccess.file_exists(bak_path):
 		return ERR_FILE_NOT_FOUND
 	if FileAccess.file_exists(main_save_path):
-		var rm := DirAccess.remove_absolute(main_save_path)
+		var rm = DirAccess.remove_absolute(main_save_path)
 		if rm != OK:
 			return rm
 	return DirAccess.rename_absolute(bak_path, main_save_path)
@@ -219,23 +219,23 @@ func _read_slot_inner_silent(slot_id: StringName) -> Dictionary:
 	var slot: SaveSlot = _slots.get(slot_id) as SaveSlot
 	if slot == null:
 		return {}
-	var path := slot.get_file_path(save_root, use_json)
+	var path = slot.get_file_path(save_root, use_json)
 	if not FileAccess.file_exists(path):
 		return {}
-	var file := FileAccess.open(path, FileAccess.READ)
+	var file = FileAccess.open(path, FileAccess.READ)
 	if file == null:
 		return {}
-	var raw := file.get_buffer(file.get_length())
+	var raw = file.get_buffer(file.get_length())
 	file.close()
-	var processed := _post_read_transform(raw)
-	var pr := parse_save_file_buffer(processed)
+	var processed = _post_read_transform(raw)
+	var pr = parse_save_file_buffer(processed)
 	if pr.get("ok", false):
 		return (pr["data"] as Dictionary).duplicate(true)
 	return {}
 
 
 func _ensure_save_root() -> void:
-	var absolute := ProjectSettings.globalize_path(save_root)
+	var absolute = ProjectSettings.globalize_path(save_root)
 	DirAccess.make_dir_recursive_absolute(absolute)
 
 
@@ -269,12 +269,12 @@ func save_to_slot_sync(slot_id: StringName, data: Dictionary) -> Error:
 		save_failed.emit(slot_id, ERR_DOES_NOT_EXIST)
 		return ERR_DOES_NOT_EXIST
 
-	var path := slot.get_file_path(save_root, use_json)
-	var payload := _serialize_envelope(data)
-	var flags := FLAG_JSON if use_json else 0
-	var file_bytes := _compose_file_bytes(FORMAT_VERSION, get_current_schema_version(), flags, payload)
-	var final_bytes := _pre_write_transform(file_bytes)
-	var err := AtomicWriter.write_atomic(path, final_bytes, backup_on_commit)
+	var path = slot.get_file_path(save_root, use_json)
+	var payload = _serialize_envelope(data)
+	var flags = FLAG_JSON if use_json else 0
+	var file_bytes = _compose_file_bytes(FORMAT_VERSION, get_current_schema_version(), flags, payload)
+	var final_bytes = _pre_write_transform(file_bytes)
+	var err = AtomicWriter.write_atomic(path, final_bytes, backup_on_commit)
 	if err == OK:
 		slot.last_modified_unix = int(Time.get_unix_time_from_system())
 		slot.file_schema_version = get_current_schema_version()
@@ -295,21 +295,21 @@ func load_from_slot_sync(slot_id: StringName) -> Dictionary:
 		load_failed.emit(slot_id, ERR_DOES_NOT_EXIST)
 		return {}
 
-	var path := slot.get_file_path(save_root, use_json)
+	var path = slot.get_file_path(save_root, use_json)
 	if not FileAccess.file_exists(path):
 		load_failed.emit(slot_id, ERR_FILE_NOT_FOUND)
 		return {}
 
-	var file := FileAccess.open(path, FileAccess.READ)
+	var file = FileAccess.open(path, FileAccess.READ)
 	if file == null:
-		var e := FileAccess.get_open_error()
+		var e = FileAccess.get_open_error()
 		load_failed.emit(slot_id, e)
 		return {}
-	var raw := file.get_buffer(file.get_length())
+	var raw = file.get_buffer(file.get_length())
 	file.close()
 
-	var processed := _post_read_transform(raw)
-	var pr := parse_save_file_buffer(processed)
+	var processed = _post_read_transform(raw)
+	var pr = parse_save_file_buffer(processed)
 	if not pr.get("ok", false):
 		load_failed.emit(slot_id, int(pr.get("error", ERR_FILE_CORRUPT)))
 		return {}
@@ -328,11 +328,11 @@ func parse_save_file_buffer(processed: PackedByteArray) -> Dictionary:
 	if processed.is_empty():
 		return {"ok": false, "error": ERR_FILE_CORRUPT, "data": {}}
 
-	var parsed := _parse_file_bytes(processed)
+	var parsed = _parse_file_bytes(processed)
 	if not parsed.has("schema_version"):
 		return {"ok": false, "error": ERR_FILE_CORRUPT, "data": {}}
 
-	var schema := int(parsed.get("schema_version", 0))
+	var schema = int(parsed.get("schema_version", 0))
 	var inner: Dictionary = parsed.get("data", {}) as Dictionary
 	if typeof(inner) != TYPE_DICTIONARY:
 		inner = {}
@@ -347,29 +347,29 @@ func parse_save_file_buffer(processed: PackedByteArray) -> Dictionary:
 func debug_inspect_save_path(path: String) -> Dictionary:
 	if not FileAccess.file_exists(path):
 		return {"ok": false, "error": ERR_FILE_NOT_FOUND, "hex_preview": "", "json_preview": "", "thumb_path": "", "inner_dict": {}}
-	var file := FileAccess.open(path, FileAccess.READ)
+	var file = FileAccess.open(path, FileAccess.READ)
 	if file == null:
 		return {"ok": false, "error": FileAccess.get_open_error(), "hex_preview": "", "json_preview": "", "thumb_path": "", "inner_dict": {}}
-	var raw := file.get_buffer(file.get_length())
+	var raw = file.get_buffer(file.get_length())
 	file.close()
-	var processed := _post_read_transform(raw)
-	var pr := parse_save_file_buffer(processed)
-	var json_preview := ""
+	var processed = _post_read_transform(raw)
+	var pr = parse_save_file_buffer(processed)
+	var json_preview = ""
 	if pr.get("ok", false):
 		json_preview = JSON.stringify(pr["data"] as Dictionary)
-	var hex_preview := raw.hex_encode()
-	const MAX_HEX := 4096
+	var hex_preview = raw.hex_encode()
+	const MAX_HEX = 4096
 	if hex_preview.length() > MAX_HEX:
 		hex_preview = hex_preview.substr(0, MAX_HEX) + "\n… (truncated)"
-	var thumb_full := path.get_base_dir().path_join(path.get_file().get_basename() + ".jpg")
+	var thumb_full = path.get_base_dir().path_join(path.get_file().get_basename() + ".jpg")
 	if not FileAccess.file_exists(thumb_full):
 		thumb_full = ""
 
-	var inner_dict := {}
+	var inner_dict = {}
 	if pr.get("ok", false):
 		inner_dict = (pr["data"] as Dictionary).duplicate(true)
 
-	var health := debug_health_for_path(path)
+	var health = debug_health_for_path(path)
 	return {
 		"ok": pr.get("ok", false),
 		"error": pr.get("error", OK),
@@ -401,7 +401,7 @@ func _get_debug_crypto_keys() -> Dictionary:
 ## Editor / tools: quick health summary without requiring a full decode in the UI.
 ## This returns enough information to show badges: encrypted/verified/warning, schema/version mismatches, saveables presence, and counts.
 func debug_health_for_path(path: String) -> Dictionary:
-	var out := {
+	var out = {
 		"exists": false,
 		"ok": false,
 		"error": OK,
@@ -427,15 +427,15 @@ func debug_health_for_path(path: String) -> Dictionary:
 	out["exists"] = true
 	out["modified_unix"] = int(FileAccess.get_modified_time(path))
 
-	var file := FileAccess.open(path, FileAccess.READ)
+	var file = FileAccess.open(path, FileAccess.READ)
 	if file == null:
 		out["error"] = FileAccess.get_open_error()
 		return out
-	var raw := file.get_buffer(file.get_length())
+	var raw = file.get_buffer(file.get_length())
 	file.close()
 	out["raw_size"] = raw.size()
 
-	var h := SaveFormat.parse_header(raw)
+	var h = SaveFormat.parse_header(raw)
 	if int(h.get("error", OK)) != OK:
 		out["error"] = int(h.get("error", ERR_FILE_CORRUPT))
 		return out
@@ -443,17 +443,18 @@ func debug_health_for_path(path: String) -> Dictionary:
 	out["format_version"] = int(h.get("format_version", 0))
 	out["flags"] = int(h.get("flags", 0))
 	out["schema_version"] = int(h.get("schema_version", 0))
-	out["encrypted_outer"] = int(out["format_version"]) == int(SaveSecurity.OUTER_FORMAT_VERSION)
+	# Lite mode must compile even when SaveState Pro is not installed.
+	out["encrypted_outer"] = false
 
-	var processed := raw
+	var processed = raw
 	if bool(out["encrypted_outer"]):
-		var keys := _get_debug_crypto_keys()
+		var keys = _get_debug_crypto_keys()
 		var aes: PackedByteArray = keys.get("aes", PackedByteArray()) as PackedByteArray
 		var hmac: PackedByteArray = keys.get("hmac", PackedByteArray()) as PackedByteArray
-		out["keys_present"] = aes.size() == int(SaveSecurity.AES_KEY_SIZE) and not hmac.is_empty()
+		out["keys_present"] = false
 		if bool(out["keys_present"]):
-			var opened := SaveSecurity.open_outer_save_file(raw, aes, hmac)
-			var verr := int(opened.get("error", ERR_FILE_CORRUPT))
+			var opened: Dictionary = {}
+			var verr = int(opened.get("error", ERR_FILE_CORRUPT))
 			out["verify_error"] = verr
 			out["verified"] = verr == OK
 			if verr == OK:
@@ -461,7 +462,7 @@ func debug_health_for_path(path: String) -> Dictionary:
 		else:
 			out["verified"] = null
 
-	var pr := parse_save_file_buffer(processed)
+	var pr = parse_save_file_buffer(processed)
 	out["ok"] = bool(pr.get("ok", false))
 	if not bool(out["ok"]):
 		out["error"] = int(pr.get("error", ERR_FILE_CORRUPT))
@@ -478,7 +479,7 @@ func debug_health_for_path(path: String) -> Dictionary:
 
 
 func _serialize_envelope(data: Dictionary) -> PackedByteArray:
-	var envelope := {"schema_version": get_current_schema_version(), "data": data}
+	var envelope = {"schema_version": get_current_schema_version(), "data": data}
 	if use_json:
 		return JSON.stringify(envelope).to_utf8_buffer()
 	return var_to_bytes(envelope)
@@ -490,27 +491,27 @@ func _compose_file_bytes(
 		flags: int,
 		payload: PackedByteArray
 	) -> PackedByteArray:
-	var header := SaveFormat.build_header(format_ver, schema_ver, flags, payload.size())
-	var out := header
+	var header = SaveFormat.build_header(format_ver, schema_ver, flags, payload.size())
+	var out = header
 	out.append_array(payload)
 	return out
 
 
 func _parse_file_bytes(file_bytes: PackedByteArray) -> Dictionary:
-	var h := SaveFormat.parse_header(file_bytes)
+	var h = SaveFormat.parse_header(file_bytes)
 	if int(h.get("error", OK)) != OK:
 		return {}
 	var payload_len: int = int(h["payload_len"])
 	if file_bytes.size() < SaveFormat.HEADER_SIZE + payload_len:
 		return {}
-	var payload := file_bytes.slice(SaveFormat.HEADER_SIZE, SaveFormat.HEADER_SIZE + payload_len)
+	var payload = file_bytes.slice(SaveFormat.HEADER_SIZE, SaveFormat.HEADER_SIZE + payload_len)
 	var flags: int = int(h["flags"])
 	return _parse_payload(payload, flags)
 
 
 func _parse_payload(payload: PackedByteArray, flags: int) -> Dictionary:
 	if flags & FLAG_JSON:
-		var txt := payload.get_string_from_utf8()
+		var txt = payload.get_string_from_utf8()
 		var parsed: Variant = JSON.parse_string(txt)
 		if typeof(parsed) != TYPE_DICTIONARY:
 			return {}
