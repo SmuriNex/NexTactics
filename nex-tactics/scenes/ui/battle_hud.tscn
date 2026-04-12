@@ -77,6 +77,51 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 12
 text = "Voltar para meu tabuleiro"
 
+[node name="SupportSidebarPanelContainer" type="PanelContainer" parent="."]
+visible = false
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -278.0
+offset_top = -2.0
+offset_bottom = 502.0
+grow_horizontal = 0
+
+[node name="MarginContainer" type="MarginContainer" parent="SupportSidebarPanelContainer"]
+layout_mode = 2
+theme_override_constants/margin_left = 10
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 10
+theme_override_constants/margin_bottom = 10
+
+[node name="VBoxContainer" type="VBoxContainer" parent="SupportSidebarPanelContainer/MarginContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 6
+
+[node name="SupportSidebarTitleLabel" type="Label" parent="SupportSidebarPanelContainer/MarginContainer/VBoxContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 13
+text = "SUPPORTS DA PARTIDA"
+
+[node name="SupportSidebarSubtitleLabel" type="Label" parent="SupportSidebarPanelContainer/MarginContainer/VBoxContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 11
+text = "Globais ativam sozinhos. Taticos pedem alvo no PREP."
+autowrap_mode = 3
+
+[node name="SupportSidebarScroll" type="ScrollContainer" parent="SupportSidebarPanelContainer/MarginContainer/VBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="SupportSidebarCardsVBox" type="VBoxContainer" parent="SupportSidebarPanelContainer/MarginContainer/VBoxContainer/SupportSidebarScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
 [node name="InfoPanelContainer" type="PanelContainer" parent="." unique_id=1956862205]
 anchors_preset = 1
 anchor_left = 1.0

@@ -294,7 +294,7 @@ func _build_support_slot_view_data(option, support_option_state_cb: Callable) ->
 		"name": card_name,
 		"cost": 0,
 		"cost_label": "Gratis",
-		"used": str(state.get("status", "UNAVAILABLE")) == "USED",
+		"used": ["USED", "AUTO"].has(str(state.get("status", "UNAVAILABLE"))),
 		"affordable": bool(state.get("available", false)),
 		"status": str(state.get("status", "UNAVAILABLE")),
 		"reason": str(state.get("reason", "")),
@@ -437,6 +437,23 @@ func build_card_shop_option_entries(
 	return option_entries
 
 
+func _shuffle_card_offer_paths(source_paths: Array[String], player_seed: int, round_number: int) -> Array[String]:
+	var shuffled_paths: Array[String] = source_paths.duplicate()
+	if shuffled_paths.size() <= 1:
+		return shuffled_paths
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = abs(hash("local_card_shop|%d|%d" % [player_seed, round_number]))
+	for index in range(shuffled_paths.size() - 1, 0, -1):
+		var swap_index: int = rng.randi_range(0, index)
+		if swap_index == index:
+			continue
+		var current_path: String = shuffled_paths[index]
+		shuffled_paths[index] = shuffled_paths[swap_index]
+		shuffled_paths[swap_index] = current_path
+	return shuffled_paths
+
+
 func build_local_card_shop_offer_details(
 	lobby_manager,
 	local_player_id: String,
@@ -462,6 +479,7 @@ func build_local_card_shop_offer_details(
 		details["reason"] = "missing_local_player_or_player_deck"
 		return details
 
+	var player_seed: int = int(local_player.slot_index) if local_player != null else 0
 	var fallback_paths: Array[String] = []
 	var raw_pool_paths: Array[String] = []
 	var valid_pool_paths: Array[String] = []
@@ -481,7 +499,7 @@ func build_local_card_shop_offer_details(
 		if local_player.has_owned_card_path(resolved_path):
 			continue
 		fallback_paths.append(resolved_path)
-	fallback_paths.sort()
+	fallback_paths = _shuffle_card_offer_paths(fallback_paths, player_seed, round_number)
 	raw_pool_paths.sort()
 	valid_pool_paths.sort()
 	invalid_pool_paths.sort()
@@ -503,14 +521,10 @@ func build_local_card_shop_offer_details(
 			details["reason"] = "fallback_used"
 		return details
 
-	if valid_pool_paths.size() > 2:
-		valid_pool_paths.resize(2)
-	details["offer_paths"] = valid_pool_paths
-	details["available_paths"] = valid_pool_paths.duplicate()
+	details["offer_paths"] = []
+	details["available_paths"] = []
 	if valid_pool_paths.is_empty():
 		details["reason"] = "fallback_no_valid_card_resources"
-	elif valid_pool_paths.size() < 2:
-		details["reason"] = "fallback_reused_owned_valid_cards_partial"
 	else:
-		details["reason"] = "fallback_reused_owned_valid_cards"
+		details["reason"] = "fallback_all_unique_cards_owned"
 	return details

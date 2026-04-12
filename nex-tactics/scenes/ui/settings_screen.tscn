@@ -1,0 +1,150 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/settings_screen.gd" id="1_settings_screen"]
+
+[node name="SettingsScreen" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_settings_screen")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.05, 0.06, 0.08, 1)
+
+[node name="MarginContainer" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 56
+theme_override_constants/margin_top = 48
+theme_override_constants/margin_right = 56
+theme_override_constants/margin_bottom = 48
+
+[node name="MainColumn" type="VBoxContainer" parent="MarginContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 18
+
+[node name="HeaderColumn" type="VBoxContainer" parent="MarginContainer/MainColumn"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="TitleLabel" type="Label" parent="MarginContainer/MainColumn/HeaderColumn"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 42
+text = "Configurações"
+
+[node name="SubtitleLabel" type="Label" parent="MarginContainer/MainColumn/HeaderColumn"]
+layout_mode = 2
+autowrap_mode = 3
+theme_override_font_sizes/font_size = 16
+modulate = Color(0.82, 0.86, 0.92, 1)
+text = "Idioma, áudio e tela."
+
+[node name="LanguagePanel" type="PanelContainer" parent="MarginContainer/MainColumn"]
+layout_mode = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/MainColumn/LanguagePanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 18
+theme_override_constants/margin_top = 18
+theme_override_constants/margin_right = 18
+theme_override_constants/margin_bottom = 18
+
+[node name="LanguageColumn" type="VBoxContainer" parent="MarginContainer/MainColumn/LanguagePanel/MarginContainer"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="LanguageTitleLabel" type="Label" parent="MarginContainer/MainColumn/LanguagePanel/MarginContainer/LanguageColumn"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 22
+text = "Idioma"
+
+[node name="LanguageOptionButton" type="OptionButton" parent="MarginContainer/MainColumn/LanguagePanel/MarginContainer/LanguageColumn"]
+custom_minimum_size = Vector2(0, 42)
+layout_mode = 2
+
+[node name="AudioPanel" type="PanelContainer" parent="MarginContainer/MainColumn"]
+layout_mode = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/MainColumn/AudioPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 18
+theme_override_constants/margin_top = 18
+theme_override_constants/margin_right = 18
+theme_override_constants/margin_bottom = 18
+
+[node name="AudioColumn" type="VBoxContainer" parent="MarginContainer/MainColumn/AudioPanel/MarginContainer"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="AudioTitleLabel" type="Label" parent="MarginContainer/MainColumn/AudioPanel/MarginContainer/AudioColumn"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 22
+text = "Áudio"
+
+[node name="MasterVolumeLabel" type="Label" parent="MarginContainer/MainColumn/AudioPanel/MarginContainer/AudioColumn"]
+layout_mode = 2
+text = "Volume geral"
+
+[node name="MasterVolumeSlider" type="HSlider" parent="MarginContainer/MainColumn/AudioPanel/MarginContainer/AudioColumn"]
+custom_minimum_size = Vector2(0, 36)
+layout_mode = 2
+max_value = 100.0
+value = 80.0
+
+[node name="DisplayPanel" type="PanelContainer" parent="MarginContainer/MainColumn"]
+layout_mode = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/MainColumn/DisplayPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 18
+theme_override_constants/margin_top = 18
+theme_override_constants/margin_right = 18
+theme_override_constants/margin_bottom = 18
+
+[node name="DisplayColumn" type="VBoxContainer" parent="MarginContainer/MainColumn/DisplayPanel/MarginContainer"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="DisplayTitleLabel" type="Label" parent="MarginContainer/MainColumn/DisplayPanel/MarginContainer/DisplayColumn"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 22
+text = "Tela"
+
+[node name="WindowModeLabel" type="Label" parent="MarginContainer/MainColumn/DisplayPanel/MarginContainer/DisplayColumn"]
+layout_mode = 2
+text = "Modo de janela"
+
+[node name="WindowModeOptionButton" type="OptionButton" parent="MarginContainer/MainColumn/DisplayPanel/MarginContainer/DisplayColumn"]
+custom_minimum_size = Vector2(0, 42)
+layout_mode = 2
+
+[node name="FooterLabel" type="Label" parent="MarginContainer/MainColumn"]
+layout_mode = 2
+autowrap_mode = 3
+modulate = Color(0.82, 0.86, 0.92, 1)
+text = "As configurações são aplicadas automaticamente."
+
+[node name="BottomSpacer" type="Control" parent="MarginContainer/MainColumn"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="BackButton" type="Button" parent="MarginContainer/MainColumn"]
+custom_minimum_size = Vector2(0, 56)
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Voltar"

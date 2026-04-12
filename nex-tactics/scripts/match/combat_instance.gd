@@ -255,13 +255,32 @@ func _seed_unit_states_from_snapshot(snapshot: Dictionary) -> void:
 			bool(unit_entry.get("is_master", false)),
 			coord
 		)
-		unit_state.current_hp = int(unit_entry.get("current_hp", unit_data.max_hp))
+		var hp_bonus: int = int(unit_entry.get("max_hp", unit_data.max_hp)) - unit_data.max_hp
+		var physical_attack_bonus: int = int(unit_entry.get("physical_attack", unit_data.physical_attack)) - unit_data.physical_attack
+		var magic_attack_bonus: int = int(unit_entry.get("magic_attack", unit_data.magic_attack)) - unit_data.magic_attack
+		var physical_defense_bonus: int = int(unit_entry.get("physical_defense", unit_data.physical_defense)) - unit_data.physical_defense
+		var magic_defense_bonus: int = int(unit_entry.get("magic_defense", unit_data.magic_defense)) - unit_data.magic_defense
+		if (
+			hp_bonus != 0
+			or physical_attack_bonus != 0
+			or magic_attack_bonus != 0
+			or physical_defense_bonus != 0
+			or magic_defense_bonus != 0
+		):
+			unit_state.apply_permanent_stat_bonus(
+				hp_bonus,
+				physical_attack_bonus,
+				magic_attack_bonus,
+				physical_defense_bonus,
+				magic_defense_bonus
+			)
+		unit_state.current_hp = clampi(
+			int(unit_entry.get("current_hp", unit_state.get_max_hp_value())),
+			0,
+			unit_state.get_max_hp_value()
+		)
 		unit_state.current_mana = int(unit_entry.get("current_mana", 0))
-		unit_state.bonus_physical_attack = int(unit_entry.get("physical_attack", unit_data.physical_attack)) - unit_data.physical_attack
-		unit_state.bonus_magic_attack = int(unit_entry.get("magic_attack", unit_data.magic_attack)) - unit_data.magic_attack
-		unit_state.bonus_physical_defense = int(unit_entry.get("physical_defense", unit_data.physical_defense)) - unit_data.physical_defense
-		unit_state.bonus_magic_defense = int(unit_entry.get("magic_defense", unit_data.magic_defense)) - unit_data.magic_defense
-		var range_bonus: int = int(unit_entry.get("attack_range", unit_state.get_attack_range())) - unit_state.get_attack_range()
+		var range_bonus: int = int(unit_entry.get("attack_range", unit_data.attack_range)) - unit_data.attack_range
 		if range_bonus > 0:
 			unit_state.apply_attack_range_bonus(range_bonus, 99)
 		unit_state.alive = unit_state.current_hp > 0
@@ -951,6 +970,15 @@ func _team_hp_total(team_side: int) -> int:
 		total_hp += unit_state.current_hp
 	return total_hp
 
+func _team_master_survived(team_side: int) -> bool:
+	for unit_state in unit_states:
+		if unit_state == null or unit_state.team_side != team_side:
+			continue
+		if not unit_state.is_master:
+			continue
+		return unit_state.can_act()
+	return false
+
 # Live-table support ownership:
 # This resolves the result of an observed/background table. It does not own the
 # local playable battle loop and should only feed match-state consequences.
@@ -1004,14 +1032,26 @@ func _finalize_result() -> void:
 		result_text = player_a_result_text
 
 	if player_a_state != null:
+		var player_a_master_survived: bool = _team_master_survived(GameEnums.TeamSide.PLAYER)
 		player_a_state.last_round_result_text = player_a_result_text
 		player_a_state.eliminated = player_a_state.current_life <= 0
 		player_a_state.record_round_result(round_number, player_a_result_text, winner_id == player_a_id, damage if loser_id == player_a_id else 0)
+		player_a_state.apply_master_round_progression(
+			winner_id == player_a_id,
+			loser_id == player_a_id,
+			player_a_master_survived
+		)
 		player_a_state.set_round_phase("RESULTADO")
 	if player_b_state != null:
+		var player_b_master_survived: bool = _team_master_survived(GameEnums.TeamSide.ENEMY)
 		player_b_state.last_round_result_text = player_b_result_text
 		player_b_state.eliminated = player_b_state.current_life <= 0
 		player_b_state.record_round_result(round_number, player_b_result_text, winner_id == player_b_id, damage if loser_id == player_b_id else 0)
+		player_b_state.apply_master_round_progression(
+			winner_id == player_b_id,
+			loser_id == player_b_id,
+			player_b_master_survived
+		)
 		player_b_state.set_round_phase("RESULTADO")
 
 	applied_result = true
@@ -1132,9 +1172,31 @@ func _build_observer_snapshot_for_viewer(
 func _apply_cards_to_team(team_side: int, owner_state: MatchPlayerState) -> String:
 	if owner_state == null:
 		return ""
-	var applied_lines: Array[String] = []
+	var card_entries: Array[Dictionary] = []
 	for card_path in owner_state.get_owned_card_paths():
 		var card_data: CardData = _load_card_data(card_path)
+		if card_data == null:
+			continue
+		card_entries.append({
+			"card_data": card_data,
+			"card_path": card_path,
+		})
+	if card_entries.is_empty():
+		return ""
+	var applied_lines: Array[String] = []
+	var selected_entries: Array[Dictionary] = card_entries
+	if owner_lobby_manager != null:
+		var support_plan: Dictionary = owner_lobby_manager.build_bot_support_orders(
+			owner_state,
+			card_entries,
+			_build_support_macro_unit_entries(team_side),
+			_build_support_macro_unit_entries(_opposite_team(team_side)),
+			team_side,
+			owner_state.player_id
+		)
+		selected_entries = support_plan.get("orders", [])
+	for selected_entry in selected_entries:
+		var card_data: CardData = selected_entry.get("card_data", null)
 		if card_data == null:
 			continue
 		var effect_text: String = _apply_card_effect_to_team(team_side, owner_state, card_data)
@@ -1147,6 +1209,28 @@ func _apply_cards_to_team(team_side: int, owner_state: MatchPlayerState) -> Stri
 			"summary": effect_text,
 		})
 	return _join_strings(applied_lines, " | ")
+
+func _build_support_macro_unit_entries(team_side: int) -> Array[Dictionary]:
+	var entries: Array[Dictionary] = []
+	for unit_state in unit_states:
+		if unit_state == null or not unit_state.can_act():
+			continue
+		if unit_state.team_side != team_side:
+			continue
+		entries.append({
+			"display_name": unit_state.get_display_name(),
+			"coord": unit_state.coord,
+			"team_side": unit_state.team_side,
+			"is_master": unit_state.is_master,
+			"current_hp": unit_state.current_hp,
+			"max_hp": unit_state.get_max_hp_value(),
+			"physical_attack": unit_state.get_physical_attack_value(),
+			"magic_attack": unit_state.get_magic_attack_value(),
+			"physical_defense": unit_state.get_physical_defense_value(),
+			"magic_defense": unit_state.get_magic_defense_value(),
+			"attack_range": unit_state.get_attack_range(),
+		})
+	return entries
 
 func _apply_card_effect_to_team(team_side: int, owner_state: MatchPlayerState, card_data: CardData) -> String:
 	if card_data == null:

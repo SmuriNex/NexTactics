@@ -32,21 +32,28 @@ var _deck_buttons: Dictionary = {}
 var _current_preview_deck_id: String = ""
 
 func _ready() -> void:
-	title_label.text = "DECK"
-	subtitle_label.text = "Escolha um deck, entenda o Mestre e conheca suas unidades e cartas antes de iniciar a partida."
-	deck_list_title_label.text = "Decks disponiveis"
-	deck_list_subtitle_label.text = "Rei Thrax, Mordos, o Necromante, e A Dama do Lago."
-	how_to_title_label.text = "Como funciona"
-	how_to_body_label.text = "\n".join([
-		"1. Escolha um deck e leve seu Mestre para a partida.",
-		"2. No PREP, voce posiciona unidades, usa supports e administra espaco.",
-		"3. O Mestre ganha XP, sobe de nivel, abre mais campo e libera promocoes durante a match.",
-	])
 	back_button.pressed.connect(_on_back_button_pressed)
 	select_button.pressed.connect(_on_select_button_pressed)
+	_apply_localized_texts()
 	_build_deck_buttons()
 	var initial_deck_id: String = GameData.get_selected_deck_id() if GameData.has_selected_deck() else _first_available_deck_id()
 	_show_deck(initial_deck_id)
+
+func _apply_localized_texts() -> void:
+	title_label.text = AppText.text("deck.title")
+	subtitle_label.text = AppText.text("deck.subtitle")
+	back_button.text = AppText.text("app.back")
+	deck_list_title_label.text = AppText.text("deck.list_title")
+	deck_list_subtitle_label.text = AppText.text("deck.list_subtitle")
+	deck_selection_status_label.text = AppText.text("deck.selection_prompt")
+	overview_title_label.text = AppText.text("deck.overview_title")
+	master_title_label.text = AppText.text("deck.master_title")
+	how_to_title_label.text = AppText.text("deck.how_title")
+	how_to_body_label.text = "\n".join([
+		AppText.text("deck.how_step_1"),
+		AppText.text("deck.how_step_2"),
+		AppText.text("deck.how_step_3"),
+	])
 
 func _first_available_deck_id() -> String:
 	var deck_ids: Array[String] = GameData.get_available_deck_ids()
@@ -59,7 +66,7 @@ func _build_deck_buttons() -> void:
 
 	for deck_entry in GameData.get_available_decks():
 		var deck_id: String = str(deck_entry.get("id", ""))
-		var presentation: Dictionary = GameData.get_deck_presentation(deck_id)
+		var presentation: Dictionary = GameData.get_deck_presentation(deck_id, AppText.current_language)
 		var button := Button.new()
 		button.toggle_mode = true
 		button.button_group = _deck_button_group
@@ -78,44 +85,44 @@ func _show_deck(deck_id: String) -> void:
 	if deck_data == null:
 		return
 
-	var presentation: Dictionary = GameData.get_deck_presentation(deck_id)
+	var presentation: Dictionary = GameData.get_deck_presentation(deck_id, AppText.current_language)
 	var accent: Color = _accent_for_deck(deck_id)
 	var master_data: UnitData = _load_unit_data(deck_data.master_data_path)
 
 	overview_title_label.text = str(presentation.get("menu_name", deck_data.display_name))
 	overview_title_label.modulate = accent
 	overview_body_label.text = "\n".join([
-		"Deck: %s" % deck_data.display_name,
-		"Faccoes: %s" % str(presentation.get("factions", "Faccoes nao definidas.")),
-		"Estilo: %s" % str(presentation.get("playstyle", "Estilo nao definido.")),
-		"Resumo: %s" % str(presentation.get("summary", "Sem resumo.")),
+		AppText.text("deck.line_deck", {"value": deck_data.display_name}),
+		AppText.text("deck.line_factions", {"value": str(presentation.get("factions", ""))}),
+		AppText.text("deck.line_playstyle", {"value": str(presentation.get("playstyle", ""))}),
+		AppText.text("deck.line_summary", {"value": str(presentation.get("summary", ""))}),
 	])
 
-	var master_name: String = master_data.display_name if master_data != null else "Sem mestre"
-	var master_role: String = str(presentation.get("master_role", "Mestre"))
+	var master_name: String = master_data.display_name if master_data != null else AppText.text("start.no_master")
+	var master_role: String = str(presentation.get("master_role", AppText.text("deck.master_title")))
 	var master_identity: String = str(presentation.get("master_identity", ""))
 	var master_skill_text: String = _resolve_master_identity_line(master_data)
-	master_title_label.text = "Mestre: %s" % master_name
+	master_title_label.text = AppText.text("start.master_prefix", {"name": master_name})
 	master_body_label.text = "\n".join([
-		"Papel: %s" % master_role,
-		"Identidade: %s" % master_identity,
-		"Habilidade/assinatura: %s" % master_skill_text,
-		"Progressao: o Mestre e o centro do XP, da capacidade do campo e das promocoes da partida.",
+		AppText.text("deck.line_master_role", {"value": master_role}),
+		AppText.text("deck.line_master_identity", {"value": master_identity}),
+		AppText.text("deck.line_master_signature", {"value": master_skill_text}),
+		AppText.text("deck.line_master_progression"),
 	])
 
-	units_title_label.text = "Unidades do deck"
+	units_title_label.text = AppText.text("deck.units_title")
 	_rebuild_unit_entries(deck_data, accent)
-	cards_title_label.text = "Cartas / supports"
+	cards_title_label.text = AppText.text("deck.cards_title")
 	_rebuild_card_entries(deck_data, accent)
 	_refresh_selection_state()
 	_refresh_deck_buttons()
 
 func _resolve_master_identity_line(master_data: UnitData) -> String:
 	if master_data == null:
-		return "Sem descricao."
+		return AppText.text("deck.no_master_description")
 	var description: String = master_data.description.strip_edges()
 	if description.is_empty():
-		return "Centro da progressao da partida."
+		return AppText.text("deck.no_master_description")
 	return description
 
 func _rebuild_unit_entries(deck_data: DeckData, accent: Color) -> void:
@@ -143,7 +150,7 @@ func _rebuild_card_entries(deck_data: DeckData, accent: Color) -> void:
 			continue
 		cards_list.add_child(_build_detail_entry(
 			card_data.display_name,
-			"%s | Gratis na partida" % _card_label(card_data),
+			"%s | %s" % [_card_label(card_data), AppText.text("deck.free_card")],
 			card_data.description,
 			accent
 		))
@@ -198,21 +205,21 @@ func _build_detail_entry(title: String, subtitle: String, body: String, accent: 
 func _refresh_selection_state() -> void:
 	var has_selected_deck: bool = GameData.has_selected_deck()
 	var is_current_selected: bool = has_selected_deck and GameData.get_selected_deck_id() == _current_preview_deck_id
-	var selected_text: String = "Nenhum"
+	var selected_text: String = AppText.text("deck.selected_none")
 	if has_selected_deck:
-		var selected_presentation: Dictionary = GameData.get_deck_presentation(GameData.get_selected_deck_id())
-		selected_text = str(selected_presentation.get("menu_name", "Deck"))
-	current_selection_label.text = "Selecionado: %s" % selected_text
+		var selected_presentation: Dictionary = GameData.get_deck_presentation(GameData.get_selected_deck_id(), AppText.current_language)
+		selected_text = str(selected_presentation.get("menu_name", AppText.text("deck.overview_title")))
+	current_selection_label.text = AppText.text("deck.current_selection", {"name": selected_text})
 
 	if is_current_selected:
-		deck_selection_status_label.text = "Este deck ja esta pronto para PLAY."
-		action_hint_label.text = "Volte para PLAY na tela inicial quando quiser iniciar a partida."
-		select_button.text = "Deck selecionado"
+		deck_selection_status_label.text = AppText.text("deck.action_selected")
+		action_hint_label.text = AppText.text("deck.action_selected_hint")
+		select_button.text = AppText.text("deck.button_selected")
 		select_button.disabled = true
 	else:
-		deck_selection_status_label.text = "Selecione este deck para liberar PLAY na tela inicial."
-		action_hint_label.text = "Confirme o deck aqui e depois use PLAY na tela inicial."
-		select_button.text = "Selecionar este deck"
+		deck_selection_status_label.text = AppText.text("deck.action_select")
+		action_hint_label.text = AppText.text("deck.action_select_hint")
+		select_button.text = AppText.text("deck.button_select")
 		select_button.disabled = false
 
 func _refresh_deck_buttons() -> void:
@@ -220,10 +227,10 @@ func _refresh_deck_buttons() -> void:
 		var button: Button = _deck_buttons[deck_id]
 		if button == null:
 			continue
-		var presentation: Dictionary = GameData.get_deck_presentation(deck_id)
+		var presentation: Dictionary = GameData.get_deck_presentation(deck_id, AppText.current_language)
 		var base_text: String = str(presentation.get("menu_name", deck_id))
 		var is_selected: bool = GameData.has_selected_deck() and GameData.get_selected_deck_id() == deck_id
-		button.text = "%s%s" % [base_text, "  [SELECIONADO]" if is_selected else ""]
+		button.text = "%s%s" % [base_text, "  %s" % AppText.text("deck.badge_selected") if is_selected else ""]
 		button.button_pressed = deck_id == _current_preview_deck_id
 
 func _load_unit_data(resource_path: String) -> UnitData:
@@ -239,49 +246,13 @@ func _load_card_data(resource_path: String) -> CardData:
 	return loaded as CardData if loaded is CardData else null
 
 func _card_label(card_data: CardData) -> String:
-	match card_data.support_effect_type:
-		GameEnums.SupportCardEffectType.PLAYER_LIFE_HEAL:
-			return "Suporte de vida"
-		GameEnums.SupportCardEffectType.CELL_TRAP_STUN, GameEnums.SupportCardEffectType.OPENING_ACTION_SLOW_FIELD:
-			return "Suporte de campo"
-		GameEnums.SupportCardEffectType.CONDITIONAL_NEXT_ROUND_GOLD, GameEnums.SupportCardEffectType.CONDITIONAL_TRIBUTE_STEAL:
-			return "Suporte tatico"
-		GameEnums.SupportCardEffectType.UNIT_ATTACK_BUFF, GameEnums.SupportCardEffectType.MAGIC_ATTACK_MULTIPLIER, GameEnums.SupportCardEffectType.PHYSICAL_DEFENSE_RATIO_BUFF:
-			return "Suporte de combate"
-		_:
-			return "Support"
+	return AppText.support_type_name(card_data.support_effect_type)
 
 func _race_name(race: int) -> String:
-	match race:
-		GameEnums.Race.HUMAN:
-			return "Humano"
-		GameEnums.Race.ELF:
-			return "Elfo"
-		GameEnums.Race.OGRE:
-			return "Ogro"
-		GameEnums.Race.FAIRY:
-			return "Fada"
-		GameEnums.Race.UNDEAD:
-			return "Morto-vivo"
-		GameEnums.Race.BEAST:
-			return "Besta"
-		_:
-			return "Raca"
+	return AppText.race_name(race)
 
 func _class_name(class_type: int) -> String:
-	match class_type:
-		GameEnums.ClassType.ATTACKER:
-			return "Atacante"
-		GameEnums.ClassType.TANK:
-			return "Tanque"
-		GameEnums.ClassType.SNIPER:
-			return "Atirador"
-		GameEnums.ClassType.SUPPORT:
-			return "Suporte"
-		GameEnums.ClassType.STEALTH:
-			return "Furtivo"
-		_:
-			return "Classe"
+	return AppText.class_label(class_type)
 
 func _truncate(text: String, max_length: int) -> String:
 	var cleaned: String = text.strip_edges()

@@ -1,5 +1,5 @@
 @icon("icons/blackboard.svg")
-class_name Blackboard extends Node
+class_name BeehaveBlackboard extends Node
 
 const DEFAULT = "default"
 

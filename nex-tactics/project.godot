@@ -26,6 +26,8 @@ config/icon="res://icon.svg"
 [autoload]
 
 BattleConfig="*res://autoload/battle_config.gd"
+AppText="*res://autoload/app_text.gd"
+AppSettings="*res://autoload/app_settings.gd"
 GameData="*res://autoload/game_data.gd"
 GameDB="*res://autoload/game_db.gd"
 SignalBus="*res://autoload/signal_bus.gd"
@@ -39,7 +41,7 @@ Talo="*uid://bpmdn8oc34pg7"
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/GD-Sync/plugin.cfg", "res://addons/MultiPlay/plugin.cfg", "res://addons/a_star_grid_map/plugin.cfg", "res://addons/beehave/plugin.cfg", "res://addons/gut/plugin.cfg", "res://addons/saveEngine/plugin.cfg", "res://addons/savestate/plugin.cfg", "res://addons/simple_cards/plugin.cfg", "res://addons/talo/plugin.cfg")
+enabled=PackedStringArray("res://addons/GD-Sync/plugin.cfg", "res://addons/MultiPlay/plugin.cfg", "res://addons/a_star_grid_map/plugin.cfg", "res://addons/gut/plugin.cfg", "res://addons/saveEngine/plugin.cfg", "res://addons/savestate/plugin.cfg", "res://addons/simple_cards/plugin.cfg", "res://addons/talo/plugin.cfg")
 
 [physics]
 

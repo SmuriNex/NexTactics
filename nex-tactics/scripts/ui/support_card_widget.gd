@@ -10,6 +10,7 @@ const BASE_BG_COLOR := Color(0.11, 0.12, 0.15, 0.98)
 const HOVER_BG_BOOST := Color(0.05, 0.05, 0.05, 0.0)
 const DISABLED_BG_COLOR := Color(0.12, 0.12, 0.12, 0.86)
 const USED_BG_COLOR := Color(0.10, 0.10, 0.10, 0.92)
+const AUTO_BG_COLOR := Color(0.09, 0.15, 0.14, 0.96)
 const TEXT_DISABLED := Color(0.72, 0.72, 0.72, 1.0)
 const TEXT_PRIMARY := Color(0.96, 0.95, 0.92, 1.0)
 const TEXT_SECONDARY := Color(0.80, 0.80, 0.84, 1.0)
@@ -21,9 +22,13 @@ var accent_color: Color = Color(0.52, 0.52, 0.60, 1.0)
 var art_color: Color = Color(0.16, 0.16, 0.20, 1.0)
 
 @onready var card_panel: PanelContainer = $CardPanel
+@onready var root_margin: MarginContainer = $CardPanel/MarginContainer
+@onready var content_vbox: VBoxContainer = $CardPanel/MarginContainer/VBoxContainer
 @onready var accent_bar: ColorRect = $CardPanel/MarginContainer/VBoxContainer/AccentBar
+@onready var header_row: HBoxContainer = $CardPanel/MarginContainer/VBoxContainer/HeaderRow
 @onready var title_label: Label = $CardPanel/MarginContainer/VBoxContainer/HeaderRow/HeaderTextVBox/TitleLabel
 @onready var type_label: Label = $CardPanel/MarginContainer/VBoxContainer/HeaderRow/HeaderTextVBox/TypeLabel
+@onready var cost_badge_panel: PanelContainer = $CardPanel/MarginContainer/VBoxContainer/HeaderRow/CostBadgePanel
 @onready var cost_badge_label: Label = $CardPanel/MarginContainer/VBoxContainer/HeaderRow/CostBadgePanel/MarginContainer/CostBadgeLabel
 @onready var target_label: Label = $CardPanel/MarginContainer/VBoxContainer/TargetLabel
 @onready var art_panel: PanelContainer = $CardPanel/MarginContainer/VBoxContainer/ArtPanel
@@ -81,19 +86,37 @@ func _handle_click_input(event: InputEvent) -> void:
 
 func _apply_compact_mode() -> void:
 	if compact_mode:
-		custom_minimum_size = Vector2(140.0, 158.0)
-		title_label.add_theme_font_size_override("font_size", 12)
-		type_label.add_theme_font_size_override("font_size", 9)
-		target_label.add_theme_font_size_override("font_size", 9)
-		body_label.add_theme_font_size_override("font_size", 10)
-		body_label.max_lines_visible = 4
-		art_title_label.add_theme_font_size_override("font_size", 16)
-		art_caption_label.add_theme_font_size_override("font_size", 9)
-		cost_badge_label.add_theme_font_size_override("font_size", 10)
-		footer_label.add_theme_font_size_override("font_size", 9)
+		custom_minimum_size = Vector2(220.0, 94.0)
+		root_margin.add_theme_constant_override("margin_left", 8)
+		root_margin.add_theme_constant_override("margin_top", 6)
+		root_margin.add_theme_constant_override("margin_right", 8)
+		root_margin.add_theme_constant_override("margin_bottom", 6)
+		content_vbox.add_theme_constant_override("separation", 4)
+		header_row.add_theme_constant_override("separation", 6)
+		accent_bar.custom_minimum_size = Vector2(0.0, 4.0)
+		cost_badge_panel.custom_minimum_size = Vector2(44.0, 22.0)
+		art_panel.custom_minimum_size = Vector2(0.0, 24.0)
+		title_label.add_theme_font_size_override("font_size", 10)
+		type_label.add_theme_font_size_override("font_size", 8)
+		target_label.add_theme_font_size_override("font_size", 7)
+		body_label.add_theme_font_size_override("font_size", 8)
+		body_label.max_lines_visible = 2
+		art_title_label.add_theme_font_size_override("font_size", 11)
+		art_caption_label.add_theme_font_size_override("font_size", 7)
+		cost_badge_label.add_theme_font_size_override("font_size", 8)
+		footer_label.add_theme_font_size_override("font_size", 7)
 		return
 
 	custom_minimum_size = Vector2(270.0, 332.0)
+	root_margin.add_theme_constant_override("margin_left", 12)
+	root_margin.add_theme_constant_override("margin_top", 10)
+	root_margin.add_theme_constant_override("margin_right", 12)
+	root_margin.add_theme_constant_override("margin_bottom", 10)
+	content_vbox.add_theme_constant_override("separation", 8)
+	header_row.add_theme_constant_override("separation", 8)
+	accent_bar.custom_minimum_size = Vector2(0.0, 6.0)
+	cost_badge_panel.custom_minimum_size = Vector2(58.0, 34.0)
+	art_panel.custom_minimum_size = Vector2(0.0, 108.0)
 	title_label.add_theme_font_size_override("font_size", 18)
 	type_label.add_theme_font_size_override("font_size", 11)
 	target_label.add_theme_font_size_override("font_size", 11)
@@ -134,6 +157,9 @@ func _build_panel_style() -> StyleBoxFlat:
 	if state_kind == "selected":
 		border_width = 3
 		background_color = BASE_BG_COLOR + Color(0.02, 0.06, 0.06, 0.0)
+	elif state_kind == "auto":
+		background_color = AUTO_BG_COLOR
+		border_color = Color(0.30, 0.82, 0.70, 1.0)
 	elif state_kind == "used":
 		background_color = USED_BG_COLOR
 		border_color = Color(0.42, 0.42, 0.42, 1.0)

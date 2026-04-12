@@ -5,18 +5,20 @@
 [resource]
 script = ExtResource("1_unit_data")
 id = "tribute_raider"
-display_name = "Saqueador de Tributo"
+display_name = "Arbalesteiro de Tributo"
 race = 0
-class_type = 0
+class_type = 2
+class_label = "Atirador"
+class_short_label = "ATD"
 cost = 2
-max_hp = 14
+max_hp = 13
 physical_attack = 6
 magic_attack = 0
 physical_defense = 2
 magic_defense = 0
-attack_range = 1
-crit_chance = 0.10
+attack_range = 3
+crit_chance = 0.12
 mana_max = 70
 mana_gain_on_attack = 12
 mana_gain_on_hit = 6
-description = "Bruiser humano que converte pressao inicial em dano fisico constante."
+description = "Atirador humano que mantem a linha de fogo da coroa ativa com disparos pesados e pressao de medio alcance."

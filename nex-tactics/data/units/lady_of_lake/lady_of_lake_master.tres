@@ -23,4 +23,4 @@ mana_max = 80
 mana_gain_on_attack = 18
 mana_gain_on_hit = 10
 master_skill_data = ExtResource("2_master_skill")
-description = "Mestra fada de retaguarda que guia elfos e fadas com magia, protecao, lentidao e controle refinado do campo."
+description = "Mestra fada de retaguarda que sustenta a corte com cura cadenciada, protecao magica e controle refinado do campo."

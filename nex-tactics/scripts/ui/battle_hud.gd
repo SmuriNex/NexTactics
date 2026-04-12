@@ -1,6 +1,7 @@
 extends CanvasLayer
 class_name BattleHUD
 
+const SupportCardWidgetScene := preload("res://scenes/ui/support_card_widget.tscn")
 const SupportCardVisualsScript := preload("res://scripts/ui/support_card_visuals.gd")
 
 # Presentation layer for the playable demo:
@@ -17,6 +18,8 @@ signal master_promotion_drag_started(screen_pos: Vector2)
 signal master_promotion_drag_moved(screen_pos: Vector2)
 signal master_promotion_drag_released(screen_pos: Vector2)
 signal master_promotion_drag_canceled
+signal support_sidebar_card_pressed(slot_index: int)
+signal support_sidebar_card_right_clicked(slot_index: int)
 
 
 @onready var round_label: Label = $PanelContainer/MarginContainer/VBoxContainer/RoundLabel
@@ -28,6 +31,10 @@ signal master_promotion_drag_canceled
 @onready var observer_banner_panel_container: PanelContainer = $ObserverBannerPanelContainer
 @onready var observer_banner_label: Label = $ObserverBannerPanelContainer/MarginContainer/HBoxContainer/ObserverBannerLabel
 @onready var observer_return_button: Button = $ObserverBannerPanelContainer/MarginContainer/HBoxContainer/ObserverReturnButton
+@onready var support_sidebar_panel_container: PanelContainer = $SupportSidebarPanelContainer
+@onready var support_sidebar_title_label: Label = $SupportSidebarPanelContainer/MarginContainer/VBoxContainer/SupportSidebarTitleLabel
+@onready var support_sidebar_subtitle_label: Label = $SupportSidebarPanelContainer/MarginContainer/VBoxContainer/SupportSidebarSubtitleLabel
+@onready var support_sidebar_cards_vbox: VBoxContainer = $SupportSidebarPanelContainer/MarginContainer/VBoxContainer/SupportSidebarScroll/SupportSidebarCardsVBox
 @onready var info_panel_container: PanelContainer = $InfoPanelContainer
 @onready var unit_info_title_label: Label = $InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/HeaderPanel/MarginContainer/VBoxContainer/HeaderRow/UnitInfoTitleLabel
 @onready var unit_info_cost_label: Label = $InfoPanelContainer/MarginContainer/InfoScroll/VBoxContainer/HeaderPanel/MarginContainer/VBoxContainer/HeaderRow/UnitInfoCostLabel
@@ -60,9 +67,12 @@ var final_ranking_label: Label = null
 var final_winner_label: Label = null
 var final_stats_label: Label = null
 var final_play_again_button: Button = null
+var support_sidebar_widgets: Array[SupportCardWidget] = []
+var support_sidebar_has_cards: bool = false
 
 func _ready() -> void:
 	_ensure_phase8_overlays()
+	observer_return_button.text = AppText.text("hud.return_board")
 	if observer_return_button != null:
 		observer_return_button.pressed.connect(_on_observer_return_button_pressed)
 	if card_shop_card_a != null:
@@ -75,6 +85,7 @@ func _ready() -> void:
 		master_promotion_token.drag_released.connect(_on_master_promotion_token_drag_released)
 		master_promotion_token.drag_canceled.connect(_on_master_promotion_token_drag_canceled)
 	clear_unit_info()
+	clear_support_sidebar()
 	clear_observer_banner()
 	update_player_sidebar([])
 	hide_card_shop()
@@ -92,35 +103,33 @@ func update_status(
 	master_status_text: String = "",
 	progression_feedback_text: String = ""
 ) -> void:
-	round_label.text = "RODADA %d" % round_number
-	player_life_label.text = "Vida jog.    %d" % player_life
+	round_label.text = AppText.text("hud.round", {"round": round_number})
+	player_life_label.text = AppText.text("hud.life", {"value": player_life})
 	if not master_status_text.is_empty():
 		player_life_label.text += "\n%s" % master_status_text
 	if last_income_total > 0:
-		gold_label.text = "Ouro         %d (+%d)" % [gold_value, last_income_total]
+		gold_label.text = AppText.text("hud.gold_income", {"value": gold_value, "income": last_income_total})
 	else:
-		gold_label.text = "Ouro         %d" % gold_value
-	state_label.text = "Estado       %s" % state_name
+		gold_label.text = AppText.text("hud.gold", {"value": gold_value})
+	state_label.text = AppText.text("hud.state", {"value": state_name})
 	if not progression_feedback_text.is_empty():
 		state_label.text += "\n%s" % progression_feedback_text
-	opponent_label.text = "Oponente     %s" % opponent_name
+	opponent_label.text = AppText.text("hud.opponent", {"value": opponent_name})
 
 func update_unit_info(unit_state: BattleUnitState) -> void:
 	if unit_state == null or unit_state.unit_data == null:
 		clear_unit_info()
 		return
 	info_panel_container.visible = true
+	_sync_right_side_panels()
 	_set_default_section_titles()
 
 	var title_text: String = unit_state.get_display_name()
 	if unit_state.is_master:
 		title_text += " [MESTRE]"
-	var cost_text: String = "Custo %d" % unit_state.unit_data.get_effective_cost()
-	var subtitle_text: String = "%s | %s | %s" % [
-		_team_name(unit_state.team_side),
-		unit_state.get_race_name(),
-		unit_state.get_class_name(),
-	]
+	var active_skill: Dictionary = _active_skill_info(unit_state)
+	var cost_text: String = "Mana %d" % int(active_skill.get("mana_cost", 0)) if bool(active_skill.get("available", false)) else "Sem ativa"
+	var subtitle_text: String = "Raca: %s" % unit_state.get_race_name()
 
 	_set_info_blocks(
 		title_text,
@@ -137,6 +146,7 @@ func update_card_info(card_data: CardData) -> void:
 		clear_unit_info()
 		return
 	info_panel_container.visible = true
+	_sync_right_side_panels()
 	_set_default_section_titles()
 
 	var primary_lines: Array[String] = [
@@ -149,7 +159,7 @@ func update_card_info(card_data: CardData) -> void:
 	]
 	var tags_lines: Array[String] = [
 		"Tags: CARTA, PREPARO",
-		"Uso: clique para armar e depois escolha o alvo, quando aplicavel.",
+		"Uso: %s" % _support_card_usage_text(card_data),
 	]
 
 	_set_info_blocks(
@@ -167,12 +177,12 @@ func update_observed_board(snapshot: Dictionary) -> void:
 		clear_observer_banner()
 		return
 
-	var player_name: String = str(snapshot.get("player_name", "Jogador"))
+	var player_name: String = str(snapshot.get("player_name", AppText.text("match.default_player")))
 	var opponent_name: String = str(snapshot.get("opponent_name", ""))
 	if opponent_name.is_empty():
-		set_observer_banner("OBSERVANDO: %s" % player_name)
+		set_observer_banner(AppText.text("hud.observing", {"name": player_name}))
 		return
-	set_observer_banner("OBSERVANDO: %s vs %s" % [player_name, opponent_name])
+	set_observer_banner(AppText.text("hud.observing_vs", {"name_a": player_name, "name_b": opponent_name}))
 
 func set_observer_banner(text: String) -> void:
 	if observer_banner_panel_container == null or observer_banner_label == null:
@@ -187,19 +197,36 @@ func set_observer_banner(text: String) -> void:
 func clear_observer_banner() -> void:
 	if observer_banner_panel_container == null or observer_banner_label == null:
 		return
-	observer_banner_label.text = "OBSERVANDO: -"
+	observer_banner_label.text = AppText.text("hud.observing_empty")
 	observer_banner_panel_container.visible = false
 
 func clear_unit_info() -> void:
 	info_panel_container.visible = false
 	_set_default_section_titles()
-	unit_info_title_label.text = "Info da unidade"
-	unit_info_cost_label.text = "Custo -"
-	unit_info_subtitle_label.text = "Clique com o botao direito em uma unidade ou carta."
+	unit_info_title_label.text = AppText.text("hud.unit_info_title")
+	unit_info_cost_label.text = AppText.text("hud.unit_info_cost")
+	unit_info_subtitle_label.text = AppText.text("hud.unit_info_subtitle")
 	primary_block_label.text = "-"
 	stats_block_label.text = "-"
 	skill_block_label.text = "-"
 	tags_block_label.text = "-"
+	_sync_right_side_panels()
+
+func clear_support_sidebar() -> void:
+	support_sidebar_has_cards = false
+	_ensure_support_sidebar_widget_count(0)
+	if support_sidebar_title_label != null:
+		support_sidebar_title_label.text = AppText.text("hud.supports_title")
+	if support_sidebar_subtitle_label != null:
+		support_sidebar_subtitle_label.text = AppText.text("hud.supports_subtitle")
+	_sync_right_side_panels()
+
+func update_support_sidebar(slot_data: Array[Dictionary], selected_slot_index: int) -> void:
+	support_sidebar_has_cards = not slot_data.is_empty()
+	_ensure_support_sidebar_widget_count(slot_data.size())
+	for index in range(slot_data.size()):
+		_update_support_sidebar_card(index, slot_data[index], selected_slot_index)
+	_sync_right_side_panels()
 
 func is_over_hud(global_pos: Vector2) -> bool:
 	if elimination_overlay != null and elimination_overlay.visible:
@@ -218,6 +245,9 @@ func is_over_hud(global_pos: Vector2) -> bool:
 			return true
 	if player_sidebar_panel_container.get_global_rect().has_point(global_pos):
 		return true
+	if support_sidebar_panel_container != null and support_sidebar_panel_container.visible:
+		if support_sidebar_panel_container.get_global_rect().has_point(global_pos):
+			return true
 	if info_panel_container.visible and info_panel_container.get_global_rect().has_point(global_pos):
 		return true
 	return false
@@ -233,10 +263,11 @@ func show_card_shop(round_number: int, option_entries: Array[Dictionary]) -> voi
 		return
 	card_shop_overlay.visible = true
 	card_shop_option_paths.clear()
-	card_shop_title_label.text = "LOJA DA PARTIDA - RODADA %d" % round_number
-	card_shop_subtitle_label.text = "Escolha 1 carta gratuita. O PREP fica pausado ate voce decidir."
+	card_shop_title_label.text = AppText.text("hud.card_shop_title", {"round": round_number})
+	card_shop_subtitle_label.text = AppText.text("hud.card_shop_subtitle")
 	_set_card_shop_card(card_shop_card_a, option_entries, 0)
 	_set_card_shop_card(card_shop_card_b, option_entries, 1)
+	_sync_right_side_panels()
 
 func hide_card_shop() -> void:
 	if card_shop_overlay == null:
@@ -247,6 +278,7 @@ func hide_card_shop() -> void:
 		card_shop_card_a.visible = false
 	if card_shop_card_b != null:
 		card_shop_card_b.visible = false
+	_sync_right_side_panels()
 
 func set_master_promotion_token_state(
 	is_visible: bool,
@@ -291,7 +323,7 @@ func show_elimination_screen(placement_text: String) -> void:
 	_ensure_phase8_overlays()
 	hide_final_screen()
 	if elimination_placement_label != null:
-		elimination_placement_label.text = "Sua colocacao: %s" % placement_text
+		elimination_placement_label.text = AppText.text("hud.placement", {"value": placement_text})
 	if elimination_overlay != null:
 		elimination_overlay.visible = true
 
@@ -309,19 +341,19 @@ func show_final_screen(
 	_ensure_phase8_overlays()
 	hide_elimination_screen()
 	if final_placement_label != null:
-		final_placement_label.text = "Sua colocacao: %s" % placement_text
+		final_placement_label.text = AppText.text("hud.placement", {"value": placement_text})
 	if final_ranking_label != null:
 		var ranking_text: String = _join_strings(ranking_lines, "\n")
 		if ranking_text.is_empty():
-			ranking_text = "Ranking indisponivel."
-		final_ranking_label.text = "Ranking completo:\n%s" % ranking_text
+			ranking_text = AppText.text("hud.ranking_unavailable")
+		final_ranking_label.text = AppText.text("hud.ranking_full", {"value": ranking_text})
 	if final_winner_label != null:
 		var winner_text: String = _join_strings(winner_unit_lines, "\n")
 		if winner_text.is_empty():
-			winner_text = "Composicao final indisponivel."
-		final_winner_label.text = "Pecas finais do vencedor (%s):\n%s" % [winner_name, winner_text]
+			winner_text = AppText.text("hud.winner_unavailable")
+		final_winner_label.text = AppText.text("hud.winner_units", {"name": winner_name, "value": winner_text})
 	if final_stats_label != null:
-		final_stats_label.text = "Dano total causado na partida: %d" % total_damage
+		final_stats_label.text = AppText.text("hud.total_damage", {"value": total_damage})
 	if final_overlay != null:
 		final_overlay.visible = true
 
@@ -335,21 +367,21 @@ func _ensure_phase8_overlays() -> void:
 
 	elimination_overlay = _build_fullscreen_overlay("EliminationOverlay")
 	var elimination_vbox: VBoxContainer = _build_overlay_panel(elimination_overlay, Vector2(560.0, 250.0))
-	elimination_vbox.add_child(_build_overlay_label("VOCE FOI ELIMINADO", 24, HORIZONTAL_ALIGNMENT_CENTER, true))
-	elimination_placement_label = _build_overlay_label("Sua colocacao: Top -", 17, HORIZONTAL_ALIGNMENT_CENTER, true)
+	elimination_vbox.add_child(_build_overlay_label(AppText.text("hud.eliminated_title"), 24, HORIZONTAL_ALIGNMENT_CENTER, true))
+	elimination_placement_label = _build_overlay_label(AppText.text("hud.placement", {"value": "Top -"}), 17, HORIZONTAL_ALIGNMENT_CENTER, true)
 	elimination_vbox.add_child(elimination_placement_label)
-	elimination_vbox.add_child(_build_overlay_label("Voce pode continuar assistindo em observer ou voltar para a tela inicial.", 12, HORIZONTAL_ALIGNMENT_CENTER, true))
+	elimination_vbox.add_child(_build_overlay_label(AppText.text("hud.eliminated_body"), 12, HORIZONTAL_ALIGNMENT_CENTER, true))
 	var elimination_buttons := HBoxContainer.new()
 	elimination_buttons.alignment = BoxContainer.ALIGNMENT_CENTER
 	elimination_buttons.add_theme_constant_override("separation", 10)
 	elimination_vbox.add_child(elimination_buttons)
 	elimination_watch_button = Button.new()
-	elimination_watch_button.text = "Assistir ate o fim"
+	elimination_watch_button.text = AppText.text("hud.watch_to_end")
 	elimination_watch_button.focus_mode = Control.FOCUS_NONE
 	elimination_watch_button.pressed.connect(_on_elimination_watch_button_pressed)
 	elimination_buttons.add_child(elimination_watch_button)
 	elimination_back_button = Button.new()
-	elimination_back_button.text = "Voltar ao inicio"
+	elimination_back_button.text = AppText.text("hud.return_start")
 	elimination_back_button.focus_mode = Control.FOCUS_NONE
 	elimination_back_button.pressed.connect(_on_elimination_back_button_pressed)
 	elimination_buttons.add_child(elimination_back_button)
@@ -357,19 +389,19 @@ func _ensure_phase8_overlays() -> void:
 
 	final_overlay = _build_fullscreen_overlay("FinalOverlay")
 	var final_vbox: VBoxContainer = _build_overlay_panel(final_overlay, Vector2(820.0, 520.0))
-	final_vbox.add_child(_build_overlay_label("FIM DA PARTIDA", 24, HORIZONTAL_ALIGNMENT_CENTER, true))
-	final_placement_label = _build_overlay_label("Sua colocacao: Top -", 17, HORIZONTAL_ALIGNMENT_CENTER, true)
+	final_vbox.add_child(_build_overlay_label(AppText.text("hud.match_end"), 24, HORIZONTAL_ALIGNMENT_CENTER, true))
+	final_placement_label = _build_overlay_label(AppText.text("hud.placement", {"value": "Top -"}), 17, HORIZONTAL_ALIGNMENT_CENTER, true)
 	final_vbox.add_child(final_placement_label)
-	final_ranking_label = _build_overlay_label("Ranking completo:", 12, HORIZONTAL_ALIGNMENT_LEFT, true)
+	final_ranking_label = _build_overlay_label(AppText.text("hud.ranking_full", {"value": ""}).strip_edges(), 12, HORIZONTAL_ALIGNMENT_LEFT, true)
 	final_ranking_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	final_vbox.add_child(final_ranking_label)
-	final_winner_label = _build_overlay_label("Pecas finais do vencedor:", 12, HORIZONTAL_ALIGNMENT_LEFT, true)
+	final_winner_label = _build_overlay_label(AppText.text("hud.winner_units", {"name": "-", "value": ""}).strip_edges(), 12, HORIZONTAL_ALIGNMENT_LEFT, true)
 	final_winner_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	final_vbox.add_child(final_winner_label)
-	final_stats_label = _build_overlay_label("Dano total causado na partida: 0", 12, HORIZONTAL_ALIGNMENT_LEFT, true)
+	final_stats_label = _build_overlay_label(AppText.text("hud.total_damage", {"value": 0}), 12, HORIZONTAL_ALIGNMENT_LEFT, true)
 	final_vbox.add_child(final_stats_label)
 	final_play_again_button = Button.new()
-	final_play_again_button.text = "Jogar novamente"
+	final_play_again_button.text = AppText.text("hud.play_again")
 	final_play_again_button.focus_mode = Control.FOCUS_NONE
 	final_play_again_button.custom_minimum_size = Vector2(0.0, 38.0)
 	final_play_again_button.pressed.connect(_on_final_play_again_button_pressed)
@@ -460,6 +492,66 @@ func update_player_sidebar(entries: Array[Dictionary]) -> void:
 		row_button.pressed.connect(_on_player_sidebar_button_pressed.bind(str(entry.get("player_id", ""))))
 		player_sidebar_list.add_child(row_button)
 
+func _ensure_support_sidebar_widget_count(slot_count: int) -> void:
+	while support_sidebar_widgets.size() > slot_count:
+		var index := support_sidebar_widgets.size() - 1
+		support_sidebar_widgets[index].queue_free()
+		support_sidebar_widgets.remove_at(index)
+
+	while support_sidebar_widgets.size() < slot_count:
+		var widget := SupportCardWidgetScene.instantiate() as SupportCardWidget
+		widget.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		widget.pressed.connect(_on_support_sidebar_card_pressed.bind(support_sidebar_widgets.size()))
+		widget.right_clicked.connect(_on_support_sidebar_card_right_clicked.bind(support_sidebar_widgets.size()))
+		support_sidebar_cards_vbox.add_child(widget)
+		support_sidebar_widgets.append(widget)
+
+func _update_support_sidebar_card(slot_index: int, data: Dictionary, selected_slot_index: int) -> void:
+	if slot_index < 0 or slot_index >= support_sidebar_widgets.size():
+		return
+
+	var status: String = str(data.get("status", "UNAVAILABLE"))
+	var state_kind: String = "ready"
+	var state_label: String = AppText.text("deploy.support_available")
+	var reason_text: String = str(data.get("reason", ""))
+	if status == "AUTO":
+		state_kind = "auto"
+		state_label = AppText.text("support.footer_auto")
+	elif status == "USED":
+		state_kind = "used"
+		state_label = AppText.text("deploy.support_used")
+	elif selected_slot_index == slot_index:
+		state_kind = "selected"
+		state_label = AppText.text("deploy.support_selected")
+	elif status == "READY":
+		state_kind = "ready"
+		state_label = AppText.text("deploy.support_available")
+	else:
+		state_kind = "unavailable"
+		state_label = AppText.text("deploy.support_unavailable")
+
+	var compact_hint: String = ""
+	if state_kind == "unavailable" and not reason_text.is_empty():
+		compact_hint = reason_text
+	elif state_kind == "auto":
+		compact_hint = _auto_support_runtime_hint(data.get("card_data", null) as CardData)
+
+	var view_data: Dictionary = SupportCardVisualsScript.build_view_data(
+		data.get("card_data", null) as CardData,
+		state_label,
+		state_kind,
+		true,
+		compact_hint
+	)
+	support_sidebar_widgets[slot_index].configure(view_data)
+	support_sidebar_widgets[slot_index].visible = true
+
+func _sync_right_side_panels() -> void:
+	if info_panel_container == null or support_sidebar_panel_container == null:
+		return
+	var can_show_supports: bool = support_sidebar_has_cards and not info_panel_container.visible and not is_card_shop_open()
+	support_sidebar_panel_container.visible = can_show_supports
+
 func _set_card_shop_card(widget: SupportCardWidget, option_entries: Array[Dictionary], index: int) -> void:
 	if widget == null:
 		return
@@ -478,7 +570,7 @@ func _set_card_shop_card(widget: SupportCardWidget, option_entries: Array[Dictio
 	if card_data == null:
 		widget.configure(SupportCardVisualsScript.build_view_data(
 			null,
-			"INDISPONIVEL",
+			AppText.text("deploy.support_unavailable"),
 			"unavailable",
 			false
 		))
@@ -486,18 +578,18 @@ func _set_card_shop_card(widget: SupportCardWidget, option_entries: Array[Dictio
 
 	var view_data: Dictionary = SupportCardVisualsScript.build_view_data(
 		card_data,
-		"CLIQUE PARA ESCOLHER",
+		AppText.text("hud.click_to_choose"),
 		"shop",
 		false,
-		"Gratis"
+		AppText.text("hud.free_short")
 	)
 	widget.configure(view_data)
 
 func _set_default_section_titles() -> void:
-	primary_section_title_label.text = "VIDA E MANA"
-	stats_section_title_label.text = "ATRIBUTOS"
-	skill_section_title_label.text = "PASSIVAS E HABILIDADE"
-	tags_section_title_label.text = "PERFIL E TAGS"
+	primary_section_title_label.text = AppText.text("hud.section_unit")
+	stats_section_title_label.text = AppText.text("hud.section_stats")
+	skill_section_title_label.text = AppText.text("hud.section_skill")
+	tags_section_title_label.text = AppText.text("hud.section_effects")
 
 func _set_info_blocks(
 	title_text: String,
@@ -517,82 +609,151 @@ func _set_info_blocks(
 	tags_block_label.text = tags_text
 
 func _build_primary_lines(unit_state: BattleUnitState) -> Array[String]:
-	return [
-		"PV: %d / %d" % [unit_state.current_hp, unit_state.get_max_hp_value()],
-		"Mana: %d / %d" % [unit_state.current_mana, unit_state.get_mana_max()],
-		"Alcance: %d | Critico: %d%%" % [
-			unit_state.get_attack_range(),
-			int(round(unit_state.get_crit_chance() * 100.0)),
-		],
-		"Ganho de mana: ataque +%d | dano +%d" % [
-			unit_state.get_mana_gain_on_attack(),
-			unit_state.get_mana_gain_on_hit(),
-		],
+	var lines: Array[String] = [
+		"Raca: %s" % unit_state.get_race_name(),
+		"Classe: %s" % unit_state.get_class_name(),
+		_format_stat_breakdown_line("Alcance", unit_state.get_attack_range_breakdown()),
 	]
+	var active_skill: Dictionary = _active_skill_info(unit_state)
+	if bool(active_skill.get("available", false)):
+		lines.append("Mana para ativar: %d" % int(active_skill.get("mana_cost", 0)))
+	else:
+		lines.append("Mana para ativar: sem habilidade de mana")
+	return lines
 
 func _build_stats_lines(unit_state: BattleUnitState) -> Array[String]:
 	return [
-		"ATQ total: %d" % unit_state.get_attack_value(),
-		"ATQ fisico: %d | ATQ magico: %d" % [
-			unit_state.get_physical_attack_value(),
-			unit_state.get_magic_attack_value(),
-		],
-		"DEF total: %d" % unit_state.get_defense_value(),
-		"DEF fisica: %d | DEF magica: %d" % [
-			unit_state.get_physical_defense_value(),
-			unit_state.get_magic_defense_value(),
-		],
+		_format_stat_breakdown_line("Vida", unit_state.get_max_hp_breakdown()),
+		_format_stat_breakdown_line("ATQ fisico", unit_state.get_physical_attack_breakdown()),
+		_format_stat_breakdown_line("ATQ magico", unit_state.get_magic_attack_breakdown()),
+		_format_stat_breakdown_line("DEF fisica", unit_state.get_physical_defense_breakdown()),
+		_format_stat_breakdown_line("DEF magica", unit_state.get_magic_defense_breakdown()),
 	]
 
 func _build_skill_lines(unit_state: BattleUnitState) -> Array[String]:
 	var lines: Array[String] = []
-	var piece_passive: Dictionary = _piece_passive_info(unit_state)
-	var race_passive: Dictionary = _race_passive_info(unit_state)
-	var class_passive: Dictionary = _class_passive_info(unit_state)
 	var active_skill: Dictionary = _active_skill_info(unit_state)
-
-	lines.append("Passiva da peca: %s - %s" % [
-		str(piece_passive.get("name", "Sem passiva exclusiva")),
-		str(piece_passive.get("description", "Esta unidade usa os efeitos base do kit.")),
-	])
-	lines.append("Raca: %s - %s" % [
-		str(race_passive.get("name", "Raca base")),
-		str(race_passive.get("description", "Tag tematica.")),
-	])
-	lines.append("Papel de classe: %s - %s" % [
-		str(class_passive.get("name", "Classe base")),
-		str(class_passive.get("description", "Papel tatico da unidade.")),
-	])
+	if unit_state.is_master:
+		var piece_passive: Dictionary = _piece_passive_info(unit_state)
+		lines.append("Passiva de Mestre: %s" % str(piece_passive.get("name", "Sem passiva exclusiva")))
+		lines.append(str(piece_passive.get("description", "Esta unidade usa os efeitos base do kit.")))
 
 	if bool(active_skill.get("available", false)):
 		lines.append("Ativa: %s" % str(active_skill.get("name", "Habilidade ativa")))
-		lines.append("Efeito: %s" % str(active_skill.get("description", "Ativa um efeito especial de combate.")))
-		lines.append("Custo de mana: %d | Alcance: %d" % [
+		lines.append("Descricao: %s" % str(active_skill.get("description", "Ativa um efeito especial de combate.")))
+		lines.append("Mana para ativar: %d | Alcance da habilidade: %d" % [
 			int(active_skill.get("mana_cost", 0)),
 			int(active_skill.get("range", 1)),
 		])
 		var target_text: String = str(active_skill.get("target_text", ""))
 		if not target_text.is_empty():
-			lines.append("Alvo/condicao: %s" % target_text)
+			lines.append("Uso: %s" % target_text)
 	else:
-		lines.append("Ativa: Sem habilidade ativa separada.")
-		lines.append("Efeito: esta unidade luta com ataques basicos e passivas.")
+		lines.append("Ativa: esta peca nao usa habilidade separada de mana.")
 
 	return lines
 
 func _build_tag_lines(unit_state: BattleUnitState) -> Array[String]:
 	var lines: Array[String] = []
-	var profile_text: String = _translated_unit_profile(unit_state)
-	if not profile_text.is_empty():
-		lines.append("Perfil: %s" % profile_text)
+	var active_effects: Array[Dictionary] = unit_state.get_active_effect_entries()
+	for effect_entry in active_effects:
+		lines.append(_format_active_effect_line(effect_entry))
+	var support_sources: Array[Dictionary] = unit_state.get_active_support_sources()
+	if not support_sources.is_empty():
+		var support_parts: Array[String] = []
+		for support_entry in support_sources:
+			support_parts.append(_format_support_influence_source(support_entry))
+		lines.append("Supports ligados: %s" % _join_strings(support_parts))
 	if unit_state.has_permanent_stat_bonus():
-		lines.append("Promocao: %s" % unit_state.get_permanent_stat_bonus_text())
-	if unit_state.has_round_stat_bonus():
-		lines.append("Bonus da rodada: %s" % _build_round_bonus_text(unit_state))
-	var status_text: String = _build_status_text(unit_state)
-	if not status_text.is_empty():
-		lines.append("Estado atual: %s" % status_text)
-	lines.append("Tags: %s" % _join_strings(_build_tags(unit_state)))
+		lines.append("Bonus permanente: %s" % unit_state.get_permanent_stat_bonus_text())
+	if lines.is_empty():
+		lines.append("Sem efeitos ativos relevantes no momento.")
+	return lines
+
+func _format_active_effect_line(effect_entry: Dictionary) -> String:
+	var parts: Array[String] = [
+		_effect_kind_label(str(effect_entry.get("kind", "special"))),
+		str(effect_entry.get("name", "Efeito")),
+	]
+	var intensity: String = str(effect_entry.get("intensity", ""))
+	if not intensity.is_empty():
+		parts.append(intensity)
+	var duration_text: String = str(effect_entry.get("duration", ""))
+	if not duration_text.is_empty():
+		parts.append(duration_text)
+	return _join_strings(parts, " | ")
+
+func _effect_kind_label(kind: String) -> String:
+	match kind:
+		"buff":
+			return "BUFF"
+		"debuff":
+			return "DEBUFF"
+		_:
+			return "STATUS"
+
+func _format_support_influence_source(source_entry: Dictionary) -> String:
+	var source_kind: String = str(source_entry.get("source_kind", "")).strip_edges()
+	var source_name: String = str(source_entry.get("source_name", "")).strip_edges()
+	if source_kind.is_empty():
+		return source_name
+	if source_name.is_empty():
+		return source_kind
+	return "%s | %s" % [source_kind, source_name]
+
+func _format_stat_breakdown_line(label: String, breakdown: Dictionary) -> String:
+	var base_value: int = int(breakdown.get("base", 0))
+	var bonus_total: int = int(breakdown.get("bonus", 0))
+	var penalty_total: int = int(breakdown.get("penalty", 0))
+	var suffix: String = ""
+	if bonus_total > 0:
+		suffix += "+%d" % bonus_total
+	if penalty_total > 0:
+		suffix += "-%d" % penalty_total
+	return "%s: %d%s" % [label, base_value, suffix]
+
+func _build_positive_effect_lines(unit_state: BattleUnitState) -> Array[String]:
+	var lines: Array[String] = []
+	if unit_state.current_physical_shield > 0:
+		lines.append("Escudo fisico %d" % unit_state.current_physical_shield)
+	if unit_state.current_magic_shield > 0:
+		lines.append("Escudo magico %d" % unit_state.current_magic_shield)
+	if unit_state.is_stealthed():
+		lines.append("Furtividade")
+	if unit_state.get_lifesteal_ratio() > 0.0:
+		lines.append("Roubo de vida %d%%" % int(round(unit_state.get_lifesteal_ratio() * 100.0)))
+	if unit_state.attack_range_bonus_status > 0:
+		lines.append("Alcance +%d" % unit_state.attack_range_bonus_status)
+	if unit_state.mana_gain_multiplier_status > 1.0:
+		lines.append("Mana +%d%%" % int(round((unit_state.mana_gain_multiplier_status - 1.0) * 100.0)))
+	if unit_state.death_mana_ratio_to_master > 0.0:
+		lines.append("Pacto de sangue")
+	if unit_state.blocked_basic_attack_count > 0:
+		lines.append("Bloqueio %d" % unit_state.blocked_basic_attack_count)
+	if unit_state.cleave_attacks_remaining > 0:
+		lines.append("Cleave %d" % unit_state.cleave_attacks_remaining)
+	return lines
+
+func _build_negative_effect_lines(unit_state: BattleUnitState) -> Array[String]:
+	var lines: Array[String] = []
+	if unit_state.physical_defense_multiplier_status < 1.0:
+		lines.append("DEF F %d%%" % int(round(unit_state.physical_defense_multiplier_status * 100.0)))
+	if unit_state.magic_defense_multiplier_status < 1.0:
+		lines.append("DEF M %d%%" % int(round(unit_state.magic_defense_multiplier_status * 100.0)))
+	if unit_state.mana_gain_multiplier_status < 1.0:
+		lines.append("Mana %d%%" % int(round(unit_state.mana_gain_multiplier_status * 100.0)))
+	if unit_state.action_charge_multiplier_status < 1.0:
+		lines.append("Ritmo %d%%" % int(round(unit_state.action_charge_multiplier_status * 100.0)))
+	if unit_state.physical_miss_chance_status > 0.0:
+		lines.append("Falha F %d%%" % int(round(unit_state.physical_miss_chance_status * 100.0)))
+	if unit_state.get_received_physical_damage_multiplier() > 1.0:
+		lines.append("Dano F x%.2f" % unit_state.get_received_physical_damage_multiplier())
+	if unit_state.has_turn_skip():
+		lines.append("Pula %d" % unit_state.skip_turns_remaining)
+	if unit_state.is_charmed():
+		lines.append("Encantado")
+	if unit_state.has_forced_target():
+		lines.append("Provocado")
 	return lines
 
 func _piece_passive_info(unit_state: BattleUnitState) -> Dictionary:
@@ -610,18 +771,18 @@ func _piece_passive_info(unit_state: BattleUnitState) -> Dictionary:
 	match unit_state.unit_data.id:
 		"necromancer_master":
 			return {
-				"name": "Colheita de Almas",
-				"description": "Sempre que qualquer unidade morre, Mordos acumula almas. Seus esqueletos invocados escalam com o total de almas da luta.",
+				"name": "Carnificina Ascendente",
+				"description": "Sempre que qualquer unidade morre, Mordos fortalece as pecas sobreviventes do proprio time e transforma a luta em snowball.",
 			}
 		"thrax_master":
 			return {
 				"name": "Ganancia do Rei",
-				"description": "Todo o exercito de Thrax recebe ataque fisico extra com base no ouro real guardado pelo jogador.",
+				"description": "Quanto mais ouro o reino preserva, mais o exercito ganha ataque e defesa fisica, com armadura extra no proprio Thrax.",
 			}
 		"lady_of_lake_master":
 			return {
 				"name": "Aguas da Vida",
-				"description": "Enquanto viver, a Dama do Lago cura passivamente o aliado ferido com menor vida e troca de alvo quando ele se estabiliza.",
+				"description": "Enquanto viver, a Dama do Lago pulsa curas periodicas no aliado mais ferido. O sustain continua, mas agora exige mais tempo.",
 			}
 		_:
 			return {
@@ -729,7 +890,7 @@ func _active_skill_info(unit_state: BattleUnitState) -> Dictionary:
 		GameEnums.SkillEffectType.ADJACENT_MANA_GIFT:
 			info.target_text = "Afeta aliados adjacentes."
 		GameEnums.SkillEffectType.MASTER_TAUNT_AURA:
-			info.target_text = "Provoca inimigos proximos para focarem o Mestre."
+			info.target_text = "Provoca todos os inimigos vivos para focarem o Mestre."
 		GameEnums.SkillEffectType.TARGET_MAGIC_BURST_SLOW:
 			info.target_text = "Prioriza o inimigo mais forte e reduz muito o ritmo dele."
 		GameEnums.SkillEffectType.SLOWED_CRIT_STRIKE:
@@ -827,6 +988,27 @@ func _build_support_stats_lines(card_data: CardData) -> Array[String]:
 		stats_lines.append("Sem modificadores numericos extras.")
 	return stats_lines
 
+func _auto_support_runtime_hint(card_data: CardData) -> String:
+	if card_data == null:
+		return "Ja entrou ativa no PREP"
+	match card_data.support_effect_type:
+		GameEnums.SupportCardEffectType.DELAYED_BLIND_FIELD:
+			return "Campo ativo: aplica cegueira em um turno aleatorio"
+		GameEnums.SupportCardEffectType.CONDITIONAL_NEXT_ROUND_GOLD:
+			return "Em espera: rende ouro se voce vencer a rodada"
+		GameEnums.SupportCardEffectType.CONDITIONAL_TRIBUTE_STEAL:
+			return "Em espera: rouba ouro se vencer com dano no Mestre"
+		GameEnums.SupportCardEffectType.OPENING_REPOSITION:
+			return "Em espera: reposiciona um inimigo na abertura"
+		GameEnums.SupportCardEffectType.OPENING_ACTION_SLOW_FIELD:
+			return "Campo ativo: desacelera o time inimigo na abertura"
+		GameEnums.SupportCardEffectType.PERIODIC_RANDOM_MAGIC_FIELD:
+			return "Campo ativo: dano magico periodico em inimigos"
+		GameEnums.SupportCardEffectType.CONDITIONAL_SUMMON_ON_FIRST_ALLY_DEATH:
+			return "Em espera: invoca na primeira baixa aliada"
+		_:
+			return "Ja entrou ativa no PREP"
+
 func _format_player_sidebar_entry(entry: Dictionary) -> String:
 	var markers: Array[String] = []
 	if bool(entry.get("is_local", false)):
@@ -872,6 +1054,12 @@ func _on_card_shop_option_pressed(option_index: int) -> void:
 	if card_path.is_empty():
 		return
 	card_shop_option_selected.emit(card_path)
+
+func _on_support_sidebar_card_pressed(slot_index: int) -> void:
+	support_sidebar_card_pressed.emit(slot_index)
+
+func _on_support_sidebar_card_right_clicked(slot_index: int) -> void:
+	support_sidebar_card_right_clicked.emit(slot_index)
 
 func _on_elimination_watch_button_pressed() -> void:
 	elimination_watch_requested.emit()
@@ -1001,6 +1189,29 @@ func _support_target_name(effect_type: int) -> String:
 		_:
 			return "Desconhecido"
 
+func _support_card_usage_text(card_data: CardData) -> String:
+	if card_data == null:
+		return "Sem dados de uso."
+	match card_data.support_effect_type:
+		GameEnums.SupportCardEffectType.DELAYED_BLIND_FIELD:
+			return "Entra ativa automaticamente em todo PREP."
+		GameEnums.SupportCardEffectType.CONDITIONAL_NEXT_ROUND_GOLD:
+			return "Entra ativa automaticamente em todo PREP."
+		GameEnums.SupportCardEffectType.CONDITIONAL_TRIBUTE_STEAL:
+			return "Entra ativa automaticamente em todo PREP."
+		GameEnums.SupportCardEffectType.OPENING_REPOSITION:
+			return "Entra ativa automaticamente em todo PREP."
+		GameEnums.SupportCardEffectType.OPENING_ACTION_SLOW_FIELD:
+			return "Entra ativa automaticamente em todo PREP."
+		GameEnums.SupportCardEffectType.PERIODIC_RANDOM_MAGIC_FIELD:
+			return "Entra ativa automaticamente em todo PREP."
+		GameEnums.SupportCardEffectType.CONDITIONAL_SUMMON_ON_FIRST_ALLY_DEATH:
+			return "Entra ativa automaticamente em todo PREP."
+		GameEnums.SupportCardEffectType.CELL_TRAP_STUN:
+			return "Arme a carta no PREP e escolha uma celula do lado inimigo."
+		_:
+			return "Arme a carta no PREP e escolha uma unidade aliada."
+
 func _format_card_shop_option_text(card_data: CardData) -> String:
 	if card_data == null:
 		return "Carta indisponivel"
@@ -1013,48 +1224,8 @@ func _format_card_shop_option_text(card_data: CardData) -> String:
 
 func _build_status_text(unit_state: BattleUnitState) -> String:
 	var statuses: Array[String] = []
-	if unit_state.is_summoned_token:
-		statuses.append("Token invocado")
-	if unit_state.is_stealthed():
-		statuses.append("Furtividade")
-	if unit_state.current_physical_shield > 0:
-		statuses.append("Escudo %d" % unit_state.current_physical_shield)
-	if unit_state.current_magic_shield > 0:
-		statuses.append("Escudo magico %d" % unit_state.current_magic_shield)
-	if unit_state.get_melee_reflect_damage() > 0:
-		statuses.append("Reflexo %d" % unit_state.get_melee_reflect_damage())
-	if unit_state.get_melee_attacker_action_multiplier() < 1.0:
-		statuses.append("Ressaca %.0f%%" % (unit_state.get_melee_attacker_action_multiplier() * 100.0))
-	if unit_state.physical_defense_multiplier_status < 1.0:
-		statuses.append("DEF F x%.2f" % unit_state.physical_defense_multiplier_status)
-	if unit_state.magic_defense_multiplier_status < 1.0:
-		statuses.append("DEF M x%.2f" % unit_state.magic_defense_multiplier_status)
-	if unit_state.mana_gain_multiplier_status < 1.0:
-		statuses.append("Mana x%.2f" % unit_state.mana_gain_multiplier_status)
-	if unit_state.physical_miss_chance_status > 0.0:
-		statuses.append("Falha F %d%%" % int(round(unit_state.physical_miss_chance_status * 100.0)))
-	if unit_state.get_received_physical_damage_multiplier() > 1.0:
-		statuses.append("Dano F x%.2f" % unit_state.get_received_physical_damage_multiplier())
-	if unit_state.action_charge_multiplier_status != 1.0:
-		statuses.append("Ritmo x%.2f" % unit_state.action_charge_multiplier_status)
-	if unit_state.has_turn_skip():
-		statuses.append("Pula %d" % unit_state.skip_turns_remaining)
-	if unit_state.has_magic_crit_gift():
-		statuses.append("Critico magico pronto")
-	if unit_state.death_mana_ratio_to_master > 0.0:
-		statuses.append("Pacto de Sangue %d%%" % int(round(unit_state.death_mana_ratio_to_master * 100.0)))
-	if unit_state.blocked_basic_attack_count > 0:
-		statuses.append("Bloqueia %d" % unit_state.blocked_basic_attack_count)
-	if unit_state.get_lifesteal_ratio() > 0.0:
-		statuses.append("Roubo de vida %d%%" % int(round(unit_state.get_lifesteal_ratio() * 100.0)))
-	if unit_state.attack_range_bonus_status > 0:
-		statuses.append("Alcance +%d" % unit_state.attack_range_bonus_status)
-	if unit_state.has_cleave_attacks():
-		statuses.append("Cleave %d" % unit_state.cleave_attacks_remaining)
-	if unit_state.has_forced_target():
-		statuses.append("Provocado")
-	if unit_state.is_charmed():
-		statuses.append("Encantado")
+	for effect_entry in unit_state.get_active_effect_entries():
+		statuses.append(_format_active_effect_line(effect_entry))
 	return _join_strings(statuses)
 
 func _team_name(team_side: int) -> String:

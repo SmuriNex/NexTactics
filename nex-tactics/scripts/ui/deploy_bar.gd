@@ -36,6 +36,9 @@ var unit_slot_status_labels: Array[Label] = []
 
 var support_slot_widgets: Array[SupportCardWidget] = []
 
+func _ready() -> void:
+    set_sell_zone_feedback(false, false)
+
 func update_unit_slots(slot_data: Array[Dictionary], dragging_slot_index: int) -> void:
     _ensure_slot_count(
         slot_data.size(),
@@ -67,15 +70,24 @@ func update_support_slots(slot_data: Array[Dictionary], selected_slot_index: int
 func set_sell_zone_feedback(active: bool, valid: bool) -> void:
     if not active:
         sell_zone_panel.modulate = SELL_IDLE_COLOR
-        sell_zone_label.text = "AREA DE VENDA\nArraste a unidade"
+        sell_zone_label.text = "%s\n%s" % [
+            AppText.text("deploy.sell_area"),
+            AppText.text("deploy.drag_to_sell"),
+        ]
         return
 
     if valid:
         sell_zone_panel.modulate = SELL_VALID_COLOR
-        sell_zone_label.text = "AREA DE VENDA\nSolte para vender"
+        sell_zone_label.text = "%s\n%s" % [
+            AppText.text("deploy.sell_area"),
+            AppText.text("deploy.drop_to_sell"),
+        ]
     else:
         sell_zone_panel.modulate = SELL_INVALID_COLOR
-        sell_zone_label.text = "AREA DE VENDA\nInvalido"
+        sell_zone_label.text = "%s\n%s" % [
+            AppText.text("deploy.sell_area"),
+            AppText.text("deploy.invalid"),
+        ]
 
 func is_over_sell_zone(global_pos: Vector2) -> bool:
     return sell_zone_panel.get_global_rect().has_point(global_pos)
@@ -209,22 +221,22 @@ func _update_slot_visual(
         slot_name_labels[slot_index].text = "S%d) %s" % [slot_index + 1, display_name]
     else:
         slot_name_labels[slot_index].text = "%d) %s" % [slot_index + 1, display_name]
-    slot_cost_labels[slot_index].text = cost_label_text if not cost_label_text.is_empty() else "Custo: %d" % cost
+    slot_cost_labels[slot_index].text = cost_label_text if not cost_label_text.is_empty() else AppText.text("deploy.cost", {"value": cost})
 
     if status == "USED":
-        slot_status_labels[slot_index].text = "USADO"
+        slot_status_labels[slot_index].text = AppText.text("deploy.status_used")
         slot_panels[slot_index].modulate = SUPPORT_SLOT_USED_COLOR if is_support else UNIT_SLOT_USED_COLOR
     elif active_slot_index == slot_index:
-        slot_status_labels[slot_index].text = "ARMADO" if is_support else "ARRAST."
+        slot_status_labels[slot_index].text = AppText.text("deploy.status_armed") if is_support else AppText.text("deploy.status_dragging")
         slot_panels[slot_index].modulate = SUPPORT_SLOT_SELECTED_COLOR if is_support else UNIT_SLOT_DRAGGING_COLOR
     elif status == "READY":
-        slot_status_labels[slot_index].text = "PRONTO"
+        slot_status_labels[slot_index].text = AppText.text("deploy.status_ready")
         slot_panels[slot_index].modulate = SUPPORT_SLOT_READY_COLOR if is_support else UNIT_SLOT_READY_COLOR
     elif status == "NO GOLD":
-        slot_status_labels[slot_index].text = "SEM OURO"
+        slot_status_labels[slot_index].text = AppText.text("deploy.status_no_gold")
         slot_panels[slot_index].modulate = SUPPORT_SLOT_BLOCKED_COLOR if is_support else UNIT_SLOT_BLOCKED_COLOR
     else:
-        slot_status_labels[slot_index].text = "INDISP."
+        slot_status_labels[slot_index].text = AppText.text("deploy.status_unavailable")
         slot_panels[slot_index].modulate = SUPPORT_SLOT_UNAVAILABLE_COLOR if is_support else UNIT_SLOT_UNAVAILABLE_COLOR
 
 func _update_support_slot_visual(slot_index: int, data: Dictionary, selected_slot_index: int) -> void:
@@ -233,20 +245,20 @@ func _update_support_slot_visual(slot_index: int, data: Dictionary, selected_slo
 
     var status: String = str(data.get("status", "UNAVAILABLE"))
     var state_kind: String = "ready"
-    var state_label: String = "DISPONIVEL"
+    var state_label: String = AppText.text("deploy.support_available")
     var reason_text: String = str(data.get("reason", ""))
     if status == "USED":
         state_kind = "used"
-        state_label = "USADA"
+        state_label = AppText.text("deploy.support_used")
     elif selected_slot_index == slot_index:
         state_kind = "selected"
-        state_label = "ARMADA"
+        state_label = AppText.text("deploy.support_selected")
     elif status == "READY":
         state_kind = "ready"
-        state_label = "DISPONIVEL"
+        state_label = AppText.text("deploy.support_available")
     else:
         state_kind = "unavailable"
-        state_label = "INDISPONIVEL"
+        state_label = AppText.text("deploy.support_unavailable")
 
     var compact_hint: String = ""
     if state_kind == "unavailable" and not reason_text.is_empty():

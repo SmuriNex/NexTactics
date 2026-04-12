@@ -8,6 +8,7 @@ const BACKLINE_PROTECTED_COLUMNS: Array[int] = [2, 4, 3, 1, 5]
 const FLANK_COLUMNS: Array[int] = [0, 1, 5, 6]
 const FALLBACK_COLUMNS: Array[int] = [3, 2, 4, 1, 5, 0, 6]
 const CARD_USE_SCORE_THRESHOLD := 35
+const FORMATION_REPLACE_SCORE_MARGIN := 24
 
 func build_deploy_orders(
 	board_grid: BoardGrid,
@@ -130,6 +131,198 @@ func build_purchase_plan(
 	return {
 		"orders": orders,
 		"gold_left": remaining_gold,
+	}
+
+func build_formation_plan(
+	candidate_entries: Array[Dictionary],
+	current_units: Array[Dictionary],
+	available_gold: int,
+	field_limit: int,
+	team_side: int,
+	master_data: UnitData = null,
+	deck_average_power: float = 0.0,
+	debug_tag: String = ""
+) -> Dictionary:
+	var selected_units: Array[Dictionary] = []
+	var remaining_candidates: Array[Dictionary] = []
+	var remaining_gold: int = maxi(0, available_gold)
+	var target_field_limit: int = maxi(0, field_limit)
+	var initial_units_count: int = 0
+	var fill_attempted: bool = false
+	var fill_stop_reason: String = "already_at_cap"
+	var fill_stop_detail: String = ""
+	var slots_added: int = 0
+
+	for unit_entry in current_units:
+		var unit_data: UnitData = unit_entry.get("unit_data", null)
+		if unit_data == null:
+			continue
+		selected_units.append(unit_entry.duplicate(true))
+	initial_units_count = selected_units.size()
+
+	var selected_ids: Dictionary = {}
+	for unit_entry in selected_units:
+		var unit_data: UnitData = unit_entry.get("unit_data", null)
+		if unit_data == null:
+			continue
+		selected_ids[unit_data.id] = true
+
+	for candidate in candidate_entries:
+		var unit_data: UnitData = candidate.get("unit_data", null)
+		if unit_data == null:
+			continue
+		if selected_ids.has(unit_data.id):
+			continue
+		remaining_candidates.append(candidate.duplicate(true))
+
+	while selected_units.size() > target_field_limit:
+		var weakest_index: int = _find_weakest_planned_unit_index(
+			selected_units,
+			master_data,
+			deck_average_power,
+			remaining_gold
+		)
+		if weakest_index < 0:
+			break
+		var removed_entry: Dictionary = selected_units[weakest_index]
+		var removed_data: UnitData = removed_entry.get("unit_data", null)
+		if removed_data != null:
+			selected_ids.erase(removed_data.id)
+		selected_units.remove_at(weakest_index)
+
+	fill_attempted = selected_units.size() < target_field_limit
+	if target_field_limit <= 0:
+		fill_stop_reason = "invalid_field_limit"
+	elif not fill_attempted:
+		fill_stop_reason = "already_at_cap"
+
+	while selected_units.size() < target_field_limit:
+		var candidate_choice: Dictionary = _pick_best_candidate_for_units(
+			remaining_candidates,
+			selected_units,
+			remaining_gold,
+			master_data,
+			deck_average_power
+		)
+		var best_index: int = int(candidate_choice.get("index", -1))
+		if best_index < 0:
+			var cheapest_candidate_cost: int = _cheapest_candidate_cost(remaining_candidates)
+			if remaining_candidates.is_empty():
+				fill_stop_reason = "no_eligible_unit"
+				fill_stop_detail = "nenhuma unidade elegivel restante"
+			elif cheapest_candidate_cost > remaining_gold:
+				fill_stop_reason = "insufficient_gold"
+				fill_stop_detail = "ouro_restante=%d menor_custo=%d" % [remaining_gold, cheapest_candidate_cost]
+			else:
+				fill_stop_reason = "planner_blocked_fill"
+				fill_stop_detail = "candidatos_restantes=%d" % remaining_candidates.size()
+			break
+
+		var chosen_candidate: Dictionary = candidate_choice.get("candidate", {})
+		var chosen_unit: UnitData = chosen_candidate.get("unit_data", null)
+		if chosen_unit == null:
+			remaining_candidates.remove_at(best_index)
+			continue
+
+		selected_units.append(_build_planner_unit_entry(
+			chosen_unit,
+			Vector2i(-1, -1),
+			false,
+			team_side,
+			-1,
+			str(chosen_candidate.get("unit_path", ""))
+		))
+		selected_ids[chosen_unit.id] = true
+		remaining_gold -= chosen_unit.get_effective_cost()
+		slots_added += 1
+		remaining_candidates.remove_at(best_index)
+		if not debug_tag.is_empty():
+			print("BOT_FORMATION_ADD bot=%s unit=%s score=%d gold_left=%d" % [
+				debug_tag,
+				chosen_unit.id,
+				int(candidate_choice.get("score", 0)),
+				remaining_gold,
+			])
+
+	while not selected_units.is_empty():
+		var replacement_choice: Dictionary = _pick_best_candidate_for_units(
+			remaining_candidates,
+			selected_units,
+			remaining_gold,
+			master_data,
+			deck_average_power
+		)
+		var replacement_index: int = int(replacement_choice.get("index", -1))
+		if replacement_index < 0:
+			break
+		var weakest_selected_index: int = _find_weakest_planned_unit_index(
+			selected_units,
+			master_data,
+			deck_average_power,
+			remaining_gold
+		)
+		if weakest_selected_index < 0:
+			break
+
+		var weakest_score: int = _score_existing_unit_for_field(
+			selected_units,
+			weakest_selected_index,
+			master_data,
+			deck_average_power,
+			remaining_gold
+		)
+		var replacement_score: int = int(replacement_choice.get("score", -100000))
+		if replacement_score <= weakest_score + FORMATION_REPLACE_SCORE_MARGIN:
+			break
+
+		var weakest_entry: Dictionary = selected_units[weakest_selected_index]
+		var weakest_data: UnitData = weakest_entry.get("unit_data", null)
+		var replacement_candidate: Dictionary = replacement_choice.get("candidate", {})
+		var replacement_data: UnitData = replacement_candidate.get("unit_data", null)
+		if replacement_data == null:
+			remaining_candidates.remove_at(replacement_index)
+			continue
+
+		selected_units[weakest_selected_index] = _build_planner_unit_entry(
+			replacement_data,
+			Vector2i(-1, -1),
+			false,
+			team_side,
+			-1,
+			str(replacement_candidate.get("unit_path", ""))
+		)
+		remaining_gold -= replacement_data.get_effective_cost()
+		remaining_candidates.remove_at(replacement_index)
+		selected_ids.erase(weakest_data.id if weakest_data != null else "")
+		selected_ids[replacement_data.id] = true
+		if not debug_tag.is_empty():
+			print("BOT_FORMATION_SWAP bot=%s out=%s in=%s old_score=%d new_score=%d gold_left=%d" % [
+				debug_tag,
+				weakest_data.id if weakest_data != null else "unknown",
+				replacement_data.id,
+				weakest_score,
+				replacement_score,
+				remaining_gold,
+			])
+
+	var laid_out_units: Array[Dictionary] = _layout_planned_units(selected_units, team_side)
+	if laid_out_units.size() >= target_field_limit and target_field_limit > 0:
+		fill_stop_reason = "filled_to_cap" if fill_attempted else "already_at_cap"
+		fill_stop_detail = ""
+	elif laid_out_units.size() < selected_units.size():
+		fill_stop_reason = "layout_blocked"
+		fill_stop_detail = "layout=%d selected=%d" % [laid_out_units.size(), selected_units.size()]
+	return {
+		"selected_units": laid_out_units,
+		"gold_left": remaining_gold,
+		"spent_gold": maxi(0, available_gold - remaining_gold),
+		"initial_units_count": initial_units_count,
+		"target_field_limit": target_field_limit,
+		"fill_attempted": fill_attempted,
+		"slots_added": slots_added,
+		"empty_slots_remaining": maxi(0, target_field_limit - laid_out_units.size()),
+		"fill_stop_reason": fill_stop_reason,
+		"fill_stop_detail": fill_stop_detail,
 	}
 
 func calculate_unit_weight(unit_data: UnitData, board_state: Dictionary, gold_state: Dictionary) -> int:
@@ -504,12 +697,14 @@ func _build_planner_unit_entry(
 	coord: Vector2i,
 	is_master: bool,
 	team_side: int,
-	current_hp: int = -1
+	current_hp: int = -1,
+	unit_path: String = ""
 ) -> Dictionary:
 	if unit_data == null:
 		return {}
 	return {
 		"unit_data": unit_data,
+		"unit_path": unit_path,
 		"unit_id": unit_data.id,
 		"display_name": unit_data.display_name,
 		"race": unit_data.race,
@@ -526,6 +721,153 @@ func _build_planner_unit_entry(
 		"max_hp": unit_data.max_hp,
 		"current_hp": unit_data.max_hp if current_hp < 0 else current_hp,
 	}
+
+func _pick_best_candidate_for_units(
+	candidate_entries: Array[Dictionary],
+	allied_units: Array[Dictionary],
+	available_gold: int,
+	master_data: UnitData,
+	deck_average_power: float
+) -> Dictionary:
+	var best_index: int = -1
+	var best_score: int = -100000
+	var best_candidate: Dictionary = {}
+	for index in range(candidate_entries.size()):
+		var candidate: Dictionary = candidate_entries[index]
+		var unit_data: UnitData = candidate.get("unit_data", null)
+		if unit_data == null:
+			continue
+		var cost: int = unit_data.get_effective_cost()
+		if cost > available_gold:
+			continue
+		var score: int = calculate_unit_weight(
+			unit_data,
+			{
+				"allied_units": allied_units,
+				"master_data": master_data,
+				"deck_average_power": deck_average_power,
+			},
+			{
+				"current_gold": available_gold,
+			}
+		)
+		if best_index == -1 or score > best_score or (score == best_score and cost < int(best_candidate.get("unit_data", unit_data).get_effective_cost())):
+			best_index = index
+			best_score = score
+			best_candidate = candidate
+	return {
+		"index": best_index,
+		"score": best_score,
+		"candidate": best_candidate,
+	}
+
+func _find_weakest_planned_unit_index(
+	selected_units: Array[Dictionary],
+	master_data: UnitData,
+	deck_average_power: float,
+	available_gold: int
+) -> int:
+	var weakest_index: int = -1
+	var weakest_score: int = 100000
+	for index in range(selected_units.size()):
+		var score: int = _score_existing_unit_for_field(
+			selected_units,
+			index,
+			master_data,
+			deck_average_power,
+			available_gold
+		)
+		if weakest_index == -1 or score < weakest_score:
+			weakest_index = index
+			weakest_score = score
+	return weakest_index
+
+func _score_existing_unit_for_field(
+	selected_units: Array[Dictionary],
+	unit_index: int,
+	master_data: UnitData,
+	deck_average_power: float,
+	available_gold: int
+) -> int:
+	if unit_index < 0 or unit_index >= selected_units.size():
+		return -100000
+	var unit_entry: Dictionary = selected_units[unit_index]
+	var unit_data: UnitData = unit_entry.get("unit_data", null)
+	if unit_data == null:
+		return -100000
+	var allied_units: Array[Dictionary] = []
+	for index in range(selected_units.size()):
+		if index == unit_index:
+			continue
+		allied_units.append(selected_units[index])
+	return calculate_unit_weight(
+		unit_data,
+		{
+			"allied_units": allied_units,
+			"master_data": master_data,
+			"deck_average_power": deck_average_power,
+		},
+		{
+			"current_gold": available_gold,
+		}
+	)
+
+func _layout_planned_units(selected_units: Array[Dictionary], team_side: int) -> Array[Dictionary]:
+	var laid_out_units: Array[Dictionary] = []
+	var sorted_units: Array[Dictionary] = []
+	var occupied_coords: Array[Vector2i] = []
+	for unit_entry in selected_units:
+		sorted_units.append(unit_entry.duplicate(true))
+	sorted_units.sort_custom(_sort_units_for_layout)
+
+	for unit_entry in sorted_units:
+		var unit_data: UnitData = unit_entry.get("unit_data", null)
+		if unit_data == null:
+			continue
+		var target_coord: Vector2i = get_best_coord_for_class(unit_data.class_type, occupied_coords, team_side)
+		if not _is_valid_coord(target_coord):
+			continue
+		unit_entry["coord"] = target_coord
+		occupied_coords.append(target_coord)
+		laid_out_units.append(unit_entry)
+	return laid_out_units
+
+func _sort_units_for_layout(a: Dictionary, b: Dictionary) -> bool:
+	var priority_a: int = _layout_priority_for_class(int(a.get("class_type", GameEnums.ClassType.ATTACKER)))
+	var priority_b: int = _layout_priority_for_class(int(b.get("class_type", GameEnums.ClassType.ATTACKER)))
+	if priority_a != priority_b:
+		return priority_a < priority_b
+	var power_a: int = _estimate_unit_power(a.get("unit_data", null), bool(a.get("is_master", false)))
+	var power_b: int = _estimate_unit_power(b.get("unit_data", null), bool(b.get("is_master", false)))
+	if power_a != power_b:
+		return power_a > power_b
+	return str(a.get("display_name", "")) < str(b.get("display_name", ""))
+
+func _layout_priority_for_class(class_type: int) -> int:
+	match class_type:
+		GameEnums.ClassType.TANK:
+			return 0
+		GameEnums.ClassType.ATTACKER:
+			return 1
+		GameEnums.ClassType.STEALTH:
+			return 2
+		GameEnums.ClassType.SUPPORT:
+			return 3
+		GameEnums.ClassType.SNIPER:
+			return 4
+		_:
+			return 5
+
+func _cheapest_candidate_cost(candidate_entries: Array[Dictionary]) -> int:
+	var cheapest_cost: int = 1000000
+	for candidate in candidate_entries:
+		var unit_data: UnitData = candidate.get("unit_data", null)
+		if unit_data == null:
+			continue
+		cheapest_cost = mini(cheapest_cost, unit_data.get_effective_cost())
+	if cheapest_cost == 1000000:
+		return -1
+	return cheapest_cost
 
 func _pick_highest_attack_ally(allied_units: Array[Dictionary], prefer_magic: bool) -> Dictionary:
 	var best_target: Dictionary = {}

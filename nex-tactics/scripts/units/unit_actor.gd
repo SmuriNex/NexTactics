@@ -15,6 +15,10 @@ const DAMAGE_FLASH_TINT := Color(1.0, 0.82, 0.82, 1.0)
 const SKILL_CAST_TINT := Color(0.98, 0.92, 0.55, 1.0)
 const HEAL_FLASH_TINT := Color(0.68, 1.0, 0.72, 1.0)
 const BUFF_FLASH_TINT := Color(0.72, 0.9, 1.0, 1.0)
+const STATUS_BUFF_COLOR := Color(0.54, 0.96, 0.62, 1.0)
+const STATUS_DEBUFF_COLOR := Color(1.0, 0.54, 0.54, 1.0)
+const STATUS_MIXED_COLOR := Color(1.0, 0.86, 0.44, 1.0)
+const STATUS_DETAIL_COLOR := Color(0.92, 0.94, 0.98, 1.0)
 
 var state: BattleUnitState
 var cell_size: float = 64.0
@@ -32,6 +36,8 @@ var display_team_side_override: int = -1
 @onready var tag_label: Label = $TagLabel
 @onready var hp_label: Label = $HpLabel
 @onready var mana_label: Label = $ManaLabel
+@onready var status_marker_label: Label = $StatusMarkerLabel
+@onready var status_detail_label: Label = $StatusDetailLabel
 
 func setup(
 	p_state: BattleUnitState,
@@ -143,6 +149,15 @@ func _configure_labels() -> void:
 	mana_label.clip_text = true
 	mana_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
+	status_marker_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	status_marker_label.clip_text = true
+	status_marker_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	status_detail_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	status_detail_label.clip_text = true
+	status_detail_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	status_detail_label.modulate = STATUS_DETAIL_COLOR
+
 	_apply_overlay_layout(overlay_visual_scale)
 
 func _refresh_visual() -> void:
@@ -166,6 +181,8 @@ func _refresh_visual() -> void:
 		hp_label.text = "PV 0"
 		mana_label.text = "MN 0"
 		modulate = Color.WHITE
+	_update_status_marker()
+	_set_overlay_labels_visible(screen_anchor_visible)
 
 	queue_redraw()
 	if visual_3d != null:
@@ -341,6 +358,8 @@ func _set_overlay_labels_visible(value: bool) -> void:
 	tag_label.visible = final_value
 	hp_label.visible = final_value
 	mana_label.visible = final_value
+	status_marker_label.visible = final_value and not status_marker_label.text.is_empty()
+	status_detail_label.visible = final_value and not status_detail_label.text.is_empty()
 
 func _set_overlay_scale(value: float) -> void:
 	var clamped_value: float = clampf(value, 0.82, 1.18)
@@ -368,6 +387,14 @@ func _apply_overlay_layout(layout_scale: float) -> void:
 		mana_label.position = Vector2(-28.0 * ui_scale, -52.0 * ui_scale)
 		mana_label.size = Vector2(56.0 * ui_scale, 10.0 * ui_scale)
 		mana_label.add_theme_font_size_override("font_size", maxi(7, int(round(8.0 * ui_scale))))
+
+		status_detail_label.position = Vector2(-24.0 * ui_scale, -78.0 * ui_scale)
+		status_detail_label.size = Vector2(48.0 * ui_scale, 10.0 * ui_scale)
+		status_detail_label.add_theme_font_size_override("font_size", maxi(7, int(round(8.0 * ui_scale))))
+
+		status_marker_label.position = Vector2(-18.0 * ui_scale, -66.0 * ui_scale)
+		status_marker_label.size = Vector2(36.0 * ui_scale, 10.0 * ui_scale)
+		status_marker_label.add_theme_font_size_override("font_size", maxi(8, int(round(9.0 * ui_scale))))
 		return
 
 	name_label.position = Vector2(-28.0, 18.0)
@@ -385,3 +412,33 @@ func _apply_overlay_layout(layout_scale: float) -> void:
 	mana_label.position = Vector2(-24.0, -46.0)
 	mana_label.size = Vector2(48.0, 10.0)
 	mana_label.add_theme_font_size_override("font_size", 8)
+
+	status_detail_label.position = Vector2(-24.0, -70.0)
+	status_detail_label.size = Vector2(48.0, 10.0)
+	status_detail_label.add_theme_font_size_override("font_size", 8)
+
+	status_marker_label.position = Vector2(-18.0, -58.0)
+	status_marker_label.size = Vector2(36.0, 10.0)
+	status_marker_label.add_theme_font_size_override("font_size", 9)
+
+func _update_status_marker() -> void:
+	if state == null or state.is_dead():
+		status_marker_label.text = ""
+		status_detail_label.text = ""
+		return
+
+	var has_buff: bool = state.has_visible_buff_marker()
+	var has_debuff: bool = state.has_visible_debuff_marker()
+	if has_buff and has_debuff:
+		status_marker_label.text = "+-"
+		status_marker_label.modulate = STATUS_MIXED_COLOR
+	elif has_buff:
+		status_marker_label.text = "+"
+		status_marker_label.modulate = STATUS_BUFF_COLOR
+	elif has_debuff:
+		status_marker_label.text = "-"
+		status_marker_label.modulate = STATUS_DEBUFF_COLOR
+	else:
+		status_marker_label.text = ""
+	status_detail_label.text = state.get_field_status_summary(2)
+	status_detail_label.modulate = STATUS_DETAIL_COLOR

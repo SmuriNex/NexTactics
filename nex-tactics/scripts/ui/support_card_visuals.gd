@@ -10,13 +10,13 @@ static func build_view_data(
 ) -> Dictionary:
 	if card_data == null:
 		return {
-			"title_text": "Carta indisponivel",
+			"title_text": _t("support.empty_title", "Carta indisponível"),
 			"cost_text": "--",
-			"type_text": "SUPORTE",
+			"type_text": _t("support.type_default", "SUPORTE"),
 			"target_text": "",
 			"art_title": "VAZIO",
-			"art_caption": "Sem dados",
-			"description_text": "Recurso ausente.",
+			"art_caption": _t("support.empty_caption", "Sem dados"),
+			"description_text": _t("support.empty_description", "Recurso ausente."),
 			"footer_text": state_label,
 			"state_kind": state_kind,
 			"compact": compact,
@@ -34,7 +34,7 @@ static func build_view_data(
 
 	return {
 		"title_text": card_data.display_name,
-		"cost_text": "FREE",
+		"cost_text": _t("support.free_cost", "FREE"),
 		"type_text": _support_card_type_name(card_data).to_upper(),
 		"target_text": _support_target_name(card_data.support_effect_type),
 		"art_title": str(accent_info.get("art_title", "SIGIL")),
@@ -50,10 +50,10 @@ static func build_view_data(
 static func _description_text(card_data: CardData, compact: bool) -> String:
 	var description_text: String = card_data.description.strip_edges()
 	if description_text.is_empty():
-		description_text = "Suporte de preparo com efeito especial."
+		description_text = _t("support.description_fallback", "Suporte de preparo com efeito especial.")
 	if not compact:
 		return description_text
-	return _truncate(description_text, 96)
+	return _truncate(description_text, 52)
 
 static func _truncate(text_value: String, limit: int) -> String:
 	var resolved_text: String = text_value.strip_edges()
@@ -64,13 +64,15 @@ static func _truncate(text_value: String, limit: int) -> String:
 static func _default_footer_text(state_kind: String) -> String:
 	match state_kind:
 		"selected":
-			return "ARMADA"
+			return _t("support.footer_selected", "ARMADA")
+		"auto":
+			return _t("support.footer_auto", "ATIVA")
 		"used":
-			return "USADA"
+			return _t("support.footer_used", "USADA")
 		"unavailable":
-			return "INDISPONIVEL"
+			return _t("support.footer_unavailable", "INDISPONÍVEL")
 		_:
-			return "DISPONIVEL"
+			return _t("support.footer_ready", "DISPONÍVEL")
 
 static func _accent_info_for_card(card_data: CardData) -> Dictionary:
 	match card_data.support_effect_type:
@@ -121,81 +123,26 @@ static func _accent_pack(art_title: String, art_caption: String, accent_color: C
 
 static func _support_card_type_name(card_data: CardData) -> String:
 	if card_data == null:
-		return "Suporte"
-
-	match card_data.support_effect_type:
-		GameEnums.SupportCardEffectType.PLAYER_LIFE_HEAL:
-			return "Suporte global"
-		GameEnums.SupportCardEffectType.UNIT_ATTACK_BUFF:
-			return "Suporte de unidade"
-		GameEnums.SupportCardEffectType.MAGIC_ATTACK_MULTIPLIER:
-			return "Equipamento magico"
-		GameEnums.SupportCardEffectType.START_STEALTH:
-			return "Equipamento furtivo"
-		GameEnums.SupportCardEffectType.DELAYED_BLIND_FIELD:
-			return "Feitico de campo"
-		GameEnums.SupportCardEffectType.DEATH_MANA_PACT:
-			return "Suporte de gatilho"
-		GameEnums.SupportCardEffectType.CELL_TRAP_STUN:
-			return "Armadilha de celula"
-		GameEnums.SupportCardEffectType.CONDITIONAL_NEXT_ROUND_GOLD:
-			return "Feitico de ouro"
-		GameEnums.SupportCardEffectType.CONDITIONAL_TRIBUTE_STEAL:
-			return "Feitico de pilhagem"
-		GameEnums.SupportCardEffectType.PHYSICAL_DEFENSE_RATIO_BUFF:
-			return "Equipamento defensivo"
-		GameEnums.SupportCardEffectType.PHYSICAL_ATTACK_RANGE_BUFF:
-			return "Equipamento ofensivo"
-		GameEnums.SupportCardEffectType.OPENING_REPOSITION:
-			return "Armadilha de abertura"
-		GameEnums.SupportCardEffectType.OPENING_ACTION_SLOW_FIELD:
-			return "Feitico de campo"
-		GameEnums.SupportCardEffectType.PERIODIC_RANDOM_MAGIC_FIELD:
-			return "Feitico de campo"
-		GameEnums.SupportCardEffectType.CONDITIONAL_SUMMON_ON_FIRST_ALLY_DEATH:
-			return "Invocacao condicional"
-		GameEnums.SupportCardEffectType.UNIT_MANA_REGEN_BUFF:
-			return "Equipamento mistico"
-		GameEnums.SupportCardEffectType.UNIT_LIFESTEAL_GIFT:
-			return "Equipamento ofensivo"
-		_:
-			return "Suporte"
+		return _t("support.type_default", "Suporte")
+	var app_text := _app_text()
+	if app_text != null:
+		return app_text.support_type_name(card_data.support_effect_type)
+	return _t("support.type_default", "Suporte")
 
 static func _support_target_name(effect_type: int) -> String:
-	match effect_type:
-		GameEnums.SupportCardEffectType.PLAYER_LIFE_HEAL:
-			return "Mestre aliado"
-		GameEnums.SupportCardEffectType.UNIT_ATTACK_BUFF:
-			return "Unidade aliada"
-		GameEnums.SupportCardEffectType.MAGIC_ATTACK_MULTIPLIER:
-			return "Unidade aliada"
-		GameEnums.SupportCardEffectType.START_STEALTH:
-			return "Unidade aliada"
-		GameEnums.SupportCardEffectType.DELAYED_BLIND_FIELD:
-			return "Campo instantaneo"
-		GameEnums.SupportCardEffectType.DEATH_MANA_PACT:
-			return "Unidade aliada"
-		GameEnums.SupportCardEffectType.CELL_TRAP_STUN:
-			return "Celula inimiga"
-		GameEnums.SupportCardEffectType.CONDITIONAL_NEXT_ROUND_GOLD:
-			return "Sem alvo"
-		GameEnums.SupportCardEffectType.CONDITIONAL_TRIBUTE_STEAL:
-			return "Sem alvo"
-		GameEnums.SupportCardEffectType.PHYSICAL_DEFENSE_RATIO_BUFF:
-			return "Unidade aliada"
-		GameEnums.SupportCardEffectType.PHYSICAL_ATTACK_RANGE_BUFF:
-			return "Unidade aliada"
-		GameEnums.SupportCardEffectType.OPENING_REPOSITION:
-			return "Sem alvo"
-		GameEnums.SupportCardEffectType.OPENING_ACTION_SLOW_FIELD:
-			return "Sem alvo"
-		GameEnums.SupportCardEffectType.PERIODIC_RANDOM_MAGIC_FIELD:
-			return "Sem alvo"
-		GameEnums.SupportCardEffectType.CONDITIONAL_SUMMON_ON_FIRST_ALLY_DEATH:
-			return "Sem alvo"
-		GameEnums.SupportCardEffectType.UNIT_MANA_REGEN_BUFF:
-			return "Unidade aliada"
-		GameEnums.SupportCardEffectType.UNIT_LIFESTEAL_GIFT:
-			return "Unidade aliada"
-		_:
-			return "Desconhecido"
+	var app_text := _app_text()
+	if app_text != null:
+		return app_text.support_target_name(effect_type)
+	return "Target"
+
+static func _app_text() -> Node:
+	var tree := Engine.get_main_loop()
+	if tree is SceneTree:
+		return (tree as SceneTree).root.get_node_or_null("AppText")
+	return null
+
+static func _t(key: String, fallback: String) -> String:
+	var app_text := _app_text()
+	if app_text != null:
+		return app_text.text(key)
+	return fallback

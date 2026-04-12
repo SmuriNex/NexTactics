@@ -151,14 +151,14 @@ func build_master_status_text() -> String:
 	var xp_segment: String = "%d/MAX" % xp_total
 	if next_rule != null:
 		xp_segment = "%d/%d" % [xp_total, next_rule.xp_total_required]
-	var status: String = "Mestre Nv %d | XP %s | Campo %d/%d" % [
-		level,
-		xp_segment,
-		get_field_unit_limit(),
-		get_field_capacity_total(),
-	]
+	var status: String = _text("master.status", "Mestre Nv {level} | XP {xp} | Campo {units}/{capacity}", {
+		"level": level,
+		"xp": xp_segment,
+		"units": get_field_unit_limit(),
+		"capacity": get_field_capacity_total(),
+	})
 	if recovery_active:
-		status += " | Recuperacao"
+		status += " | " + _text("master.recovery", "Recuperação")
 	return status
 
 func build_feedback_text() -> String:
@@ -166,17 +166,17 @@ func build_feedback_text() -> String:
 		return _pending_promotion_text()
 
 	var parts: Array[String] = []
-	parts.append("XP +%d" % int(last_round_xp_breakdown.get("xp_gained", 0)))
+	parts.append(_text("master.xp_gain", "XP +{value}", {"value": int(last_round_xp_breakdown.get("xp_gained", 0))}))
 	var recovery_bonus_xp: int = int(last_round_xp_breakdown.get("recovery_bonus_xp", 0))
 	if recovery_bonus_xp > 0:
-		parts.append("Recuperacao +%d" % recovery_bonus_xp)
+		parts.append(_text("master.recovery_bonus", "Recuperação +{value}", {"value": recovery_bonus_xp}))
 	var levels_gained: Array = last_round_xp_breakdown.get("levels_gained", [])
 	if not levels_gained.is_empty():
-		parts.append("Nv %d" % level)
+		parts.append(_text("master.level_gain", "Nv {value}", {"value": level}))
 	if int(last_round_xp_breakdown.get("capacity_after", 0)) > int(last_round_xp_breakdown.get("capacity_before", 0)):
-		parts.append("Campo %d" % get_field_capacity_total())
+		parts.append(_text("master.field_gain", "Campo {value}", {"value": get_field_capacity_total()}))
 	if int(last_round_xp_breakdown.get("promotions_granted", 0)) > 0:
-		parts.append("Promocao +%d" % int(last_round_xp_breakdown.get("promotions_granted", 0)))
+		parts.append(_text("master.promotion_gain", "Promoção +{value}", {"value": int(last_round_xp_breakdown.get("promotions_granted", 0))}))
 	var pending_text: String = _pending_promotion_text()
 	if not pending_text.is_empty():
 		parts.append(pending_text)
@@ -185,7 +185,7 @@ func build_feedback_text() -> String:
 func _pending_promotion_text() -> String:
 	if pending_promotions <= 0:
 		return ""
-	return "Promocao pendente x%d" % pending_promotions
+	return _text("master.pending_promotion", "Promoção pendente x{value}", {"value": pending_promotions})
 
 func _resolve_level_from_xp() -> void:
 	var rule: MasterLevelRule = config.get_rule_for_total_xp(xp_total)
@@ -209,3 +209,14 @@ func _promotion_label_for_rule(rule: MasterPromotionRule) -> String:
 			return "Emboscada"
 		_:
 			return "Promocao"
+
+func _text(key: String, fallback: String, params: Dictionary = {}) -> String:
+	var tree := Engine.get_main_loop()
+	if tree is SceneTree:
+		var app_text := (tree as SceneTree).root.get_node_or_null("AppText")
+		if app_text != null:
+			return app_text.text(key, params)
+	var resolved: String = fallback
+	for param_key in params.keys():
+		resolved = resolved.replace("{%s}" % str(param_key), str(params[param_key]))
+	return resolved

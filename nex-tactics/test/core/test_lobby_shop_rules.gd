@@ -23,18 +23,25 @@ func after_each() -> void:
 		game_data = null
 
 
-func test_shop_only_offers_cards_on_multiples_of_three_rounds() -> void:
+func test_shop_only_offers_cards_on_multiples_of_six_rounds() -> void:
 	var details: Dictionary = lobby_manager.build_card_shop_offer_details(local_player_id, 2)
-	assert_eq(details.get("reason", ""), "round_not_multiple_of_3")
+	assert_eq(details.get("reason", ""), "round_not_shop_round")
 	assert_eq(details.get("offer_paths", []).size(), 0)
 
+	details = lobby_manager.build_card_shop_offer_details(local_player_id, 3)
+	assert_eq(details.get("reason", ""), "round_not_shop_round")
+	assert_eq(details.get("offer_paths", []).size(), 0)
 
-func test_round_three_shop_offer_is_unique_and_belongs_to_the_deck_pool() -> void:
-	var details: Dictionary = lobby_manager.build_card_shop_offer_details(local_player_id, 3)
+	details = lobby_manager.build_card_shop_offer_details(local_player_id, 6)
+	assert_false(details.get("offer_paths", []).is_empty(), "Rodada 6 deve gerar oferta de cartas.")
+
+
+func test_round_six_shop_offer_is_unique_and_belongs_to_the_deck_pool() -> void:
+	var details: Dictionary = lobby_manager.build_card_shop_offer_details(local_player_id, 6)
 	var offer_paths: Array[String] = details.get("offer_paths", []).duplicate()
 	var valid_card_pool: Array[String] = details.get("valid_card_pool_paths", []).duplicate()
 
-	assert_false(offer_paths.is_empty(), "Rodada 3 deve gerar oferta de cartas.")
+	assert_false(offer_paths.is_empty(), "Rodada 6 deve gerar oferta de cartas.")
 	assert_lte(offer_paths.size(), 2, "Oferta da loja deve ter no maximo 2 opcoes.")
 
 	var unique_paths := {}
@@ -45,15 +52,29 @@ func test_round_three_shop_offer_is_unique_and_belongs_to_the_deck_pool() -> voi
 
 
 func test_owned_cards_are_not_reoffered_when_other_valid_cards_exist() -> void:
-	var first_details: Dictionary = lobby_manager.build_card_shop_offer_details(local_player_id, 3)
+	var first_details: Dictionary = lobby_manager.build_card_shop_offer_details(local_player_id, 6)
 	var first_offer_paths: Array[String] = first_details.get("offer_paths", []).duplicate()
 	assert_false(first_offer_paths.is_empty(), "Primeira oferta precisa existir para o teste ser util.")
 
 	var owned_path: String = first_offer_paths[0]
-	var added: bool = lobby_manager.add_owned_card_to_player(local_player_id, owned_path, 3)
+	var added: bool = lobby_manager.add_owned_card_to_player(local_player_id, owned_path, 6)
 	assert_true(added, "Carta escolhida deve ser adicionada ao jogador.")
 
-	var next_details: Dictionary = lobby_manager.build_card_shop_offer_details(local_player_id, 6)
+	var next_details: Dictionary = lobby_manager.build_card_shop_offer_details(local_player_id, 12)
 	var next_offer_paths: Array[String] = next_details.get("offer_paths", []).duplicate()
 
 	assert_false(next_offer_paths.has(owned_path), "Carta ja possuida nao deve reaparecer se houver outras validas.")
+
+
+func test_shop_stops_offering_cards_after_all_unique_cards_are_owned() -> void:
+	var details: Dictionary = lobby_manager.build_card_shop_offer_details(local_player_id, 6)
+	var valid_card_pool: Array[String] = details.get("valid_card_pool_paths", []).duplicate()
+	assert_false(valid_card_pool.is_empty(), "Deck do teste precisa ter cartas validas.")
+
+	for card_path in valid_card_pool:
+		var added: bool = lobby_manager.add_owned_card_to_player(local_player_id, card_path, 18)
+		assert_true(added, "Cada carta valida deve poder ser marcada como possuida uma vez.")
+
+	var exhausted_details: Dictionary = lobby_manager.build_card_shop_offer_details(local_player_id, 24)
+	assert_eq(exhausted_details.get("reason", ""), "all_unique_cards_owned")
+	assert_eq(exhausted_details.get("offer_paths", []).size(), 0, "Loja nao deve repetir cartas depois de esgotar o pool unico.")

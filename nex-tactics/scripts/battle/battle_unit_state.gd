@@ -76,6 +76,7 @@ var forced_target_instance_id: int = -1
 var forced_target_turns: int = 0
 var charm_source_instance_id: int = -1
 var charm_turns: int = 0
+var effect_sources: Dictionary = {}
 var current_target: BattleUnitState = null
 var target_lock_timer: int = 0
 var stuck_counter: int = 0
@@ -369,6 +370,571 @@ func get_attack_range() -> int:
 	var base_range: int = unit_data.attack_range if unit_data.attack_range > 0 else get_base_range_by_class()
 	return maxi(1, base_range + attack_range_bonus_status)
 
+func get_max_hp_breakdown() -> Dictionary:
+	if unit_data == null:
+		return _build_stat_breakdown(0, [])
+	return _build_stat_breakdown(unit_data.max_hp, [permanent_bonus_hp])
+
+func get_physical_attack_breakdown() -> Dictionary:
+	if unit_data == null:
+		return _build_stat_breakdown(0, [])
+	return _build_stat_breakdown(unit_data.physical_attack, [
+		get_race_physical_attack_bonus(),
+		get_class_physical_attack_bonus(),
+		synergy_physical_attack,
+		bonus_physical_attack,
+		permanent_bonus_physical_attack,
+		deck_passive_physical_attack,
+	])
+
+func get_magic_attack_breakdown() -> Dictionary:
+	if unit_data == null:
+		return _build_stat_breakdown(0, [])
+	return _build_stat_breakdown(unit_data.magic_attack, [
+		get_race_magic_attack_bonus(),
+		get_class_magic_attack_bonus(),
+		synergy_magic_attack,
+		bonus_magic_attack,
+		permanent_bonus_magic_attack,
+		deck_passive_magic_attack,
+	])
+
+func get_physical_defense_breakdown() -> Dictionary:
+	if unit_data == null:
+		return _build_stat_breakdown(0, [])
+	var modifier_values: Array[int] = [
+		get_race_physical_defense_bonus(),
+		get_class_physical_defense_bonus(),
+		synergy_physical_defense,
+		bonus_physical_defense,
+		permanent_bonus_physical_defense,
+		deck_passive_physical_defense,
+	]
+	var raw_total: int = unit_data.physical_defense + _sum_int_array(modifier_values)
+	var multiplier_delta: int = get_physical_defense_value() - raw_total
+	if multiplier_delta != 0:
+		modifier_values.append(multiplier_delta)
+	return _build_stat_breakdown(unit_data.physical_defense, modifier_values)
+
+func get_magic_defense_breakdown() -> Dictionary:
+	if unit_data == null:
+		return _build_stat_breakdown(0, [])
+	var modifier_values: Array[int] = [
+		get_race_magic_defense_bonus(),
+		get_class_magic_defense_bonus(),
+		synergy_magic_defense,
+		bonus_magic_defense,
+		permanent_bonus_magic_defense,
+		deck_passive_magic_defense,
+	]
+	var raw_total: int = unit_data.magic_defense + _sum_int_array(modifier_values)
+	var multiplier_delta: int = get_magic_defense_value() - raw_total
+	if multiplier_delta != 0:
+		modifier_values.append(multiplier_delta)
+	return _build_stat_breakdown(unit_data.magic_defense, modifier_values)
+
+func get_attack_range_breakdown() -> Dictionary:
+	if unit_data == null:
+		return _build_stat_breakdown(1, [])
+	var base_range: int = unit_data.attack_range if unit_data.attack_range > 0 else get_base_range_by_class()
+	return _build_stat_breakdown(base_range, [attack_range_bonus_status])
+
+func set_effect_source(
+	effect_key: String,
+	source_name: String,
+	source_kind: String = "",
+	source_note: String = "",
+	duration_label: String = ""
+) -> void:
+	var resolved_key: String = effect_key.strip_edges()
+	if resolved_key.is_empty():
+		return
+	var resolved_name: String = source_name.strip_edges()
+	var resolved_kind: String = source_kind.strip_edges()
+	var resolved_note: String = source_note.strip_edges()
+	var resolved_duration: String = duration_label.strip_edges()
+	if resolved_name.is_empty() and resolved_kind.is_empty() and resolved_note.is_empty() and resolved_duration.is_empty():
+		effect_sources.erase(resolved_key)
+		return
+	effect_sources[resolved_key] = {
+		"source_name": resolved_name,
+		"source_kind": resolved_kind,
+		"source_note": resolved_note,
+		"duration_label": resolved_duration,
+	}
+
+func clear_effect_source(effect_key: String) -> void:
+	var resolved_key: String = effect_key.strip_edges()
+	if resolved_key.is_empty():
+		return
+	effect_sources.erase(resolved_key)
+
+func clear_effect_sources(effect_keys: Array[String]) -> void:
+	for effect_key in effect_keys:
+		clear_effect_source(effect_key)
+
+func get_effect_source(effect_key: String) -> Dictionary:
+	var resolved_key: String = effect_key.strip_edges()
+	if resolved_key.is_empty():
+		return {}
+	return effect_sources.get(resolved_key, {})
+
+func has_visible_buff_marker() -> bool:
+	return (
+		get_max_hp_breakdown().get("bonus", 0) > 0
+		or get_physical_attack_breakdown().get("bonus", 0) > 0
+		or get_magic_attack_breakdown().get("bonus", 0) > 0
+		or get_physical_defense_breakdown().get("bonus", 0) > 0
+		or get_magic_defense_breakdown().get("bonus", 0) > 0
+		or get_attack_range_breakdown().get("bonus", 0) > 0
+		or current_physical_shield > 0
+		or current_magic_shield > 0
+		or stealth_turns_remaining > 0
+		or lifesteal_ratio_status > 0.0
+		or mana_gain_multiplier_status > 1.0
+		or action_charge_multiplier_status > 1.0
+		or get_melee_reflect_damage() > 0
+		or get_melee_attacker_action_multiplier() < 1.0
+		or guaranteed_magic_crit_hits > 0
+		or blocked_basic_attack_count > 0
+		or cleave_attacks_remaining > 0
+		or death_mana_ratio_to_master > 0.0
+	)
+
+func has_visible_debuff_marker() -> bool:
+	return (
+		get_max_hp_breakdown().get("penalty", 0) > 0
+		or get_physical_attack_breakdown().get("penalty", 0) > 0
+		or get_magic_attack_breakdown().get("penalty", 0) > 0
+		or get_physical_defense_breakdown().get("penalty", 0) > 0
+		or get_magic_defense_breakdown().get("penalty", 0) > 0
+		or get_attack_range_breakdown().get("penalty", 0) > 0
+		or physical_defense_multiplier_status < 1.0
+		or magic_defense_multiplier_status < 1.0
+		or mana_gain_multiplier_status < 1.0
+		or action_charge_multiplier_status < 1.0
+		or physical_miss_chance_status > 0.0
+		or received_physical_damage_multiplier_status > 1.0
+		or skip_turns_remaining > 0
+		or charm_turns > 0
+		or forced_target_turns > 0
+	)
+
+func _build_stat_breakdown(base_value: int, modifier_values: Array[int]) -> Dictionary:
+	var positive_total: int = 0
+	var negative_total: int = 0
+	for modifier_value in modifier_values:
+		if modifier_value > 0:
+			positive_total += modifier_value
+		elif modifier_value < 0:
+			negative_total += abs(modifier_value)
+	return {
+		"base": base_value,
+		"bonus": positive_total,
+		"penalty": negative_total,
+		"final": maxi(0, base_value + positive_total - negative_total),
+	}
+
+func _sum_int_array(values: Array[int]) -> int:
+	var total: int = 0
+	for value in values:
+		total += value
+	return total
+
+func _effect_duration_label(turns: int, fallback_label: String = "") -> String:
+	if turns > 0:
+		return "%dt" % turns
+	return fallback_label.strip_edges()
+
+func _append_effect_entry(
+	entries: Array[Dictionary],
+	effect_key: String,
+	kind: String,
+	name: String,
+	intensity: String = "",
+	turns: int = 0,
+	fallback_duration_label: String = "",
+	field_code: String = "",
+	priority: int = 0
+) -> void:
+	var resolved_name: String = name.strip_edges()
+	if resolved_name.is_empty():
+		return
+	var source: Dictionary = get_effect_source(effect_key)
+	var source_duration_label: String = str(source.get("duration_label", ""))
+	var duration_label: String = _effect_duration_label(
+		turns,
+		source_duration_label if not source_duration_label.is_empty() else fallback_duration_label
+	)
+	entries.append({
+		"effect_key": effect_key,
+		"kind": kind,
+		"name": resolved_name,
+		"intensity": intensity.strip_edges(),
+		"duration": duration_label,
+		"source_kind": str(source.get("source_kind", "")),
+		"source_name": str(source.get("source_name", "")),
+		"source_note": str(source.get("source_note", "")),
+		"field_code": field_code.strip_edges(),
+		"priority": priority,
+	})
+
+func get_active_effect_entries() -> Array[Dictionary]:
+	var entries: Array[Dictionary] = []
+
+	if is_summoned_token:
+		_append_effect_entry(
+			entries,
+			"summoned_token",
+			"special",
+			"Token invocado",
+			"",
+			0,
+			"fim da rodada" if token_expires_end_round else "",
+			"",
+			20
+		)
+
+	if has_turn_skip():
+		_append_effect_entry(
+			entries,
+			"turn_skip",
+			"debuff",
+			"Atordoamento",
+			"pula a proxima acao",
+			skip_turns_remaining,
+			"",
+			"ATO",
+			100
+		)
+	if physical_miss_chance_status > 0.0:
+		_append_effect_entry(
+			entries,
+			"physical_miss",
+			"debuff",
+			"Cegueira",
+			"%d%% falha fisica" % int(round(physical_miss_chance_status * 100.0)),
+			physical_miss_turns,
+			"",
+			"CEG",
+			96
+		)
+	if mana_gain_multiplier_status < 1.0:
+		var mana_debuff_name: String = "Silencio" if is_zero_approx(mana_gain_multiplier_status) else "Supressao de mana"
+		_append_effect_entry(
+			entries,
+			"mana_gain_debuff",
+			"debuff",
+			mana_debuff_name,
+			"mana %d%%" % int(round(mana_gain_multiplier_status * 100.0)),
+			mana_gain_modifier_turns,
+			"",
+			"SIL",
+			94
+		)
+	if action_charge_multiplier_status < 1.0:
+		_append_effect_entry(
+			entries,
+			"action_charge_debuff",
+			"debuff",
+			"Lentidao",
+			"ritmo %d%%" % int(round(action_charge_multiplier_status * 100.0)),
+			action_charge_modifier_turns,
+			"",
+			"LNT",
+			92
+		)
+	if received_physical_damage_multiplier_status > 1.0:
+		_append_effect_entry(
+			entries,
+			"received_physical_damage",
+			"debuff",
+			"Vulnerabilidade fisica",
+			"+%d%% dano fisico" % int(round((received_physical_damage_multiplier_status - 1.0) * 100.0)),
+			received_physical_damage_turns,
+			"",
+			"VUL",
+			88
+		)
+	if physical_defense_multiplier_status < 1.0:
+		_append_effect_entry(
+			entries,
+			"physical_defense_multiplier",
+			"debuff",
+			"Quebra DEF fisica",
+			"DEF %d%%" % int(round(physical_defense_multiplier_status * 100.0)),
+			physical_defense_debuff_turns,
+			"",
+			"",
+			82
+		)
+	if magic_defense_multiplier_status < 1.0:
+		_append_effect_entry(
+			entries,
+			"magic_defense_multiplier",
+			"debuff",
+			"Quebra DEF magica",
+			"DEF %d%%" % int(round(magic_defense_multiplier_status * 100.0)),
+			magic_defense_debuff_turns,
+			"",
+			"",
+			80
+		)
+	if is_charmed():
+		_append_effect_entry(
+			entries,
+			"charm",
+			"debuff",
+			"Encantado",
+			"atraido pela sereia",
+			charm_turns,
+			"",
+			"ENC",
+			78
+		)
+	if has_forced_target():
+		_append_effect_entry(
+			entries,
+			"forced_target",
+			"debuff",
+			"Provocado",
+			"alvo forcado",
+			forced_target_turns,
+			"",
+			"PRO",
+			74
+		)
+
+	if current_physical_shield > 0:
+		_append_effect_entry(
+			entries,
+			"physical_shield",
+			"buff",
+			"Escudo fisico",
+			"%d PV" % current_physical_shield,
+			physical_shield_turns,
+			"",
+			"ESC",
+			90
+		)
+	if current_magic_shield > 0:
+		_append_effect_entry(
+			entries,
+			"magic_shield",
+			"buff",
+			"Escudo magico",
+			"%d PV" % current_magic_shield,
+			magic_shield_turns,
+			"",
+			"ESC",
+			89
+		)
+	if is_stealthed():
+		_append_effect_entry(
+			entries,
+			"stealth",
+			"buff",
+			"Furtividade",
+			"",
+			stealth_turns_remaining,
+			"",
+			"FUR",
+			76
+		)
+	if mana_gain_multiplier_status > 1.0:
+		_append_effect_entry(
+			entries,
+			"mana_gain_buff",
+			"buff",
+			"Mana acelerada",
+			"+%d%%" % int(round((mana_gain_multiplier_status - 1.0) * 100.0)),
+			mana_gain_modifier_turns,
+			"",
+			"",
+			70
+		)
+	if action_charge_multiplier_status > 1.0:
+		_append_effect_entry(
+			entries,
+			"action_charge_buff",
+			"buff",
+			"Ritmo acelerado",
+			"ritmo %d%%" % int(round(action_charge_multiplier_status * 100.0)),
+			action_charge_modifier_turns,
+			"",
+			"",
+			69
+		)
+	if get_melee_reflect_damage() > 0:
+		_append_effect_entry(
+			entries,
+			"reflect",
+			"buff",
+			"Reflexo",
+			"%d dano" % get_melee_reflect_damage(),
+			reflect_turns,
+			"",
+			"",
+			68
+		)
+	if get_melee_attacker_action_multiplier() < 1.0:
+		_append_effect_entry(
+			entries,
+			"melee_attacker_action",
+			"buff",
+			"Contra-lentidao",
+			"agressor %d%%" % int(round(get_melee_attacker_action_multiplier() * 100.0)),
+			melee_attacker_action_turns,
+			"",
+			"",
+			67
+		)
+	if has_magic_crit_gift():
+		_append_effect_entry(
+			entries,
+			"magic_crit_gift",
+			"buff",
+			"Critico magico garantido",
+			"%d uso" % guaranteed_magic_crit_hits if guaranteed_magic_crit_hits == 1 else "%d usos" % guaranteed_magic_crit_hits,
+			0,
+			"ate usar",
+			"",
+			66
+		)
+	if blocked_basic_attack_count > 0:
+		_append_effect_entry(
+			entries,
+			"basic_attack_block",
+			"buff",
+			"Bloqueio",
+			"%d ataque" % blocked_basic_attack_count if blocked_basic_attack_count == 1 else "%d ataques" % blocked_basic_attack_count,
+			0,
+			"ate gastar",
+			"",
+			64
+		)
+	if lifesteal_ratio_status > 0.0:
+		_append_effect_entry(
+			entries,
+			"lifesteal",
+			"buff",
+			"Roubo de vida",
+			"%d%%" % int(round(lifesteal_ratio_status * 100.0)),
+			lifesteal_turns,
+			"",
+			"",
+			63
+		)
+	if attack_range_bonus_status > 0:
+		_append_effect_entry(
+			entries,
+			"attack_range",
+			"buff",
+			"Alcance extra",
+			"+%d" % attack_range_bonus_status,
+			attack_range_bonus_turns,
+			"",
+			"",
+			61
+		)
+	if cleave_attacks_remaining > 0:
+		_append_effect_entry(
+			entries,
+			"cleave",
+			"buff",
+			"Cleave",
+			"%d ataque" % cleave_attacks_remaining if cleave_attacks_remaining == 1 else "%d ataques" % cleave_attacks_remaining,
+			0,
+			"ate gastar",
+			"",
+			60
+		)
+	if death_mana_ratio_to_master > 0.0:
+		_append_effect_entry(
+			entries,
+			"blood_pact",
+			"buff",
+			"Pacto de sangue",
+			"%d%% mana do Mestre" % int(round(death_mana_ratio_to_master * 100.0)),
+			0,
+			"rodada",
+			"",
+			58
+		)
+
+	if bonus_physical_attack != 0 or bonus_magic_attack != 0:
+		var attack_parts: Array[String] = []
+		if bonus_physical_attack != 0:
+			attack_parts.append("F %+d" % bonus_physical_attack)
+		if bonus_magic_attack != 0:
+			attack_parts.append("M %+d" % bonus_magic_attack)
+		_append_effect_entry(
+			entries,
+			"round_attack_bonus",
+			"buff" if (bonus_physical_attack + bonus_magic_attack) >= 0 else "debuff",
+			"Ataque adicional",
+			_join_strings(attack_parts, " | "),
+			0,
+			"rodada",
+			"",
+			55
+		)
+	if bonus_physical_defense != 0 or bonus_magic_defense != 0:
+		var defense_parts: Array[String] = []
+		if bonus_physical_defense != 0:
+			defense_parts.append("F %+d" % bonus_physical_defense)
+		if bonus_magic_defense != 0:
+			defense_parts.append("M %+d" % bonus_magic_defense)
+		_append_effect_entry(
+			entries,
+			"round_defense_bonus",
+			"buff" if (bonus_physical_defense + bonus_magic_defense) >= 0 else "debuff",
+			"Defesa adicional",
+			_join_strings(defense_parts, " | "),
+			0,
+			"rodada",
+			"",
+			54
+		)
+
+	entries.sort_custom(_sort_effect_entries_by_priority)
+	return entries
+
+func _sort_effect_entries_by_priority(a: Dictionary, b: Dictionary) -> bool:
+	return int(a.get("priority", 0)) > int(b.get("priority", 0))
+
+func get_active_support_sources() -> Array[Dictionary]:
+	var sources: Array[Dictionary] = []
+	var seen_sources: Dictionary = {}
+	for effect_entry in get_active_effect_entries():
+		var source_name: String = str(effect_entry.get("source_name", ""))
+		var source_kind: String = str(effect_entry.get("source_kind", ""))
+		if source_name.is_empty() or not source_kind.begins_with("support"):
+			continue
+		var source_key: String = "%s|%s" % [source_kind, source_name]
+		if seen_sources.has(source_key):
+			continue
+		seen_sources[source_key] = true
+		sources.append({
+			"source_kind": source_kind,
+			"source_name": source_name,
+		})
+	return sources
+
+func get_field_status_codes(limit: int = 2) -> Array[String]:
+	var codes: Array[String] = []
+	for effect_entry in get_active_effect_entries():
+		var field_code: String = str(effect_entry.get("field_code", ""))
+		if field_code.is_empty() or codes.has(field_code):
+			continue
+		codes.append(field_code)
+		if codes.size() >= maxi(1, limit):
+			break
+	return codes
+
+func get_field_status_summary(limit: int = 2) -> String:
+	return _join_strings(get_field_status_codes(limit), "/")
+
 func get_race_crit_bonus() -> float:
 	return 0.0
 
@@ -514,6 +1080,7 @@ func clear_round_modifiers() -> void:
 	bonus_magic_attack = 0
 	bonus_physical_defense = 0
 	bonus_magic_defense = 0
+	clear_effect_sources(["round_attack_bonus", "round_defense_bonus"])
 	clear_deck_passive_modifiers()
 
 func clear_deck_passive_modifiers() -> void:
@@ -728,6 +1295,7 @@ func clear_synergy_modifiers() -> void:
 	synergy_action_charge_bonus = 0
 
 func clear_status_effects() -> void:
+	effect_sources.clear()
 	death_skill_consumed = false
 	physical_defense_multiplier_status = 1.0
 	physical_defense_debuff_turns = 0
@@ -778,7 +1346,10 @@ func apply_magic_defense_multiplier(multiplier: float, turns: int) -> void:
 	magic_defense_debuff_turns = maxi(magic_defense_debuff_turns, turns)
 
 func apply_mana_gain_multiplier(multiplier: float, turns: int) -> void:
-	mana_gain_multiplier_status = mini(mana_gain_multiplier_status, multiplier)
+	if multiplier >= 1.0:
+		mana_gain_multiplier_status = maxf(mana_gain_multiplier_status, multiplier)
+	else:
+		mana_gain_multiplier_status = minf(mana_gain_multiplier_status, multiplier)
 	mana_gain_modifier_turns = maxi(mana_gain_modifier_turns, turns)
 
 func apply_action_charge_multiplier(multiplier: float, turns: int) -> void:
@@ -829,6 +1400,8 @@ func consume_basic_attack_block() -> bool:
 	if blocked_basic_attack_count <= 0:
 		return false
 	blocked_basic_attack_count -= 1
+	if blocked_basic_attack_count <= 0:
+		clear_effect_source("basic_attack_block")
 	return true
 
 func apply_lifesteal_ratio(ratio: float, turns: int) -> void:
@@ -852,6 +1425,8 @@ func consume_cleave_attack() -> bool:
 	if cleave_attacks_remaining <= 0:
 		return false
 	cleave_attacks_remaining -= 1
+	if cleave_attacks_remaining <= 0:
+		clear_effect_source("cleave")
 	return true
 
 func apply_forced_target(target: BattleUnitState, turns: int) -> void:
@@ -876,6 +1451,7 @@ func is_forced_target(target: BattleUnitState) -> bool:
 func clear_forced_target() -> void:
 	forced_target_instance_id = -1
 	forced_target_turns = 0
+	clear_effect_source("forced_target")
 
 func is_charmed() -> bool:
 	return charm_turns > 0 and charm_source_instance_id != -1
@@ -886,6 +1462,7 @@ func is_charmed_by(target: BattleUnitState) -> bool:
 func clear_charm() -> void:
 	charm_source_instance_id = -1
 	charm_turns = 0
+	clear_effect_source("charm")
 
 func has_magic_crit_gift() -> bool:
 	return guaranteed_magic_crit_hits > 0
@@ -894,6 +1471,8 @@ func consume_magic_crit_gift() -> bool:
 	if guaranteed_magic_crit_hits <= 0:
 		return false
 	guaranteed_magic_crit_hits -= 1
+	if guaranteed_magic_crit_hits <= 0:
+		clear_effect_source("magic_crit_gift")
 	return true
 
 func is_stealthed() -> bool:
@@ -920,6 +1499,8 @@ func absorb_physical_damage(amount: int) -> Dictionary:
 
 	var absorbed: int = mini(current_physical_shield, amount)
 	current_physical_shield -= absorbed
+	if current_physical_shield <= 0:
+		clear_effect_source("physical_shield")
 	return {
 		"remaining": maxi(0, amount - absorbed),
 		"absorbed": absorbed,
@@ -931,6 +1512,8 @@ func absorb_magic_damage(amount: int) -> Dictionary:
 
 	var absorbed: int = mini(current_magic_shield, amount)
 	current_magic_shield -= absorbed
+	if current_magic_shield <= 0:
+		clear_effect_source("magic_shield")
 	return {
 		"remaining": maxi(0, amount - absorbed),
 		"absorbed": absorbed,
@@ -949,19 +1532,26 @@ func get_melee_attacker_action_multiplier() -> float:
 func clear_negative_effects() -> void:
 	physical_defense_multiplier_status = 1.0
 	physical_defense_debuff_turns = 0
+	clear_effect_source("physical_defense_multiplier")
 	magic_defense_multiplier_status = 1.0
 	magic_defense_debuff_turns = 0
+	clear_effect_source("magic_defense_multiplier")
 	if mana_gain_multiplier_status < 1.0:
 		mana_gain_multiplier_status = 1.0
 		mana_gain_modifier_turns = 0
+		clear_effect_source("mana_gain_debuff")
 	if action_charge_multiplier_status < 1.0:
 		action_charge_multiplier_status = 1.0
 		action_charge_modifier_turns = 0
+		clear_effect_source("action_charge_debuff")
 	skip_turns_remaining = 0
+	clear_effect_source("turn_skip")
 	physical_miss_chance_status = 0.0
 	physical_miss_turns = 0
+	clear_effect_source("physical_miss")
 	received_physical_damage_multiplier_status = 1.0
 	received_physical_damage_turns = 0
+	clear_effect_source("received_physical_damage")
 	clear_forced_target()
 	clear_charm()
 
@@ -970,89 +1560,116 @@ func clear_positive_effects() -> void:
 	bonus_magic_attack = 0
 	bonus_physical_defense = 0
 	bonus_magic_defense = 0
+	clear_effect_sources(["round_attack_bonus", "round_defense_bonus"])
 	if mana_gain_multiplier_status > 1.0:
 		mana_gain_multiplier_status = 1.0
 		mana_gain_modifier_turns = 0
+		clear_effect_source("mana_gain_buff")
 	if action_charge_multiplier_status > 1.0:
 		action_charge_multiplier_status = 1.0
 		action_charge_modifier_turns = 0
+		clear_effect_source("action_charge_buff")
 	stealth_turns_remaining = 0
+	clear_effect_source("stealth")
 	current_physical_shield = 0
 	physical_shield_turns = 0
+	clear_effect_source("physical_shield")
 	current_magic_shield = 0
 	magic_shield_turns = 0
+	clear_effect_source("magic_shield")
 	melee_reflect_damage = 0
 	reflect_turns = 0
+	clear_effect_source("reflect")
 	melee_attacker_action_multiplier = 1.0
 	melee_attacker_action_turns = 0
+	clear_effect_source("melee_attacker_action")
 	guaranteed_magic_crit_hits = 0
+	clear_effect_source("magic_crit_gift")
 	blocked_basic_attack_count = 0
+	clear_effect_source("basic_attack_block")
 	lifesteal_ratio_status = 0.0
 	lifesteal_turns = 0
+	clear_effect_source("lifesteal")
 	attack_range_bonus_status = 0
 	attack_range_bonus_turns = 0
+	clear_effect_source("attack_range")
 	cleave_attacks_remaining = 0
+	clear_effect_source("cleave")
 
 func advance_turn_effects() -> void:
 	if physical_defense_debuff_turns > 0:
 		physical_defense_debuff_turns -= 1
 		if physical_defense_debuff_turns <= 0:
 			physical_defense_multiplier_status = 1.0
+			clear_effect_source("physical_defense_multiplier")
 
 	if magic_defense_debuff_turns > 0:
 		magic_defense_debuff_turns -= 1
 		if magic_defense_debuff_turns <= 0:
 			magic_defense_multiplier_status = 1.0
+			clear_effect_source("magic_defense_multiplier")
 
 	if mana_gain_modifier_turns > 0:
 		mana_gain_modifier_turns -= 1
 		if mana_gain_modifier_turns <= 0:
 			mana_gain_multiplier_status = 1.0
+			clear_effect_source("mana_gain_debuff")
+			clear_effect_source("mana_gain_buff")
 
 	if action_charge_modifier_turns > 0:
 		action_charge_modifier_turns -= 1
 		if action_charge_modifier_turns <= 0:
 			action_charge_multiplier_status = 1.0
+			clear_effect_source("action_charge_debuff")
+			clear_effect_source("action_charge_buff")
 
 	if physical_miss_turns > 0:
 		physical_miss_turns -= 1
 		if physical_miss_turns <= 0:
 			physical_miss_chance_status = 0.0
+			clear_effect_source("physical_miss")
 
 	if received_physical_damage_turns > 0:
 		received_physical_damage_turns -= 1
 		if received_physical_damage_turns <= 0:
 			received_physical_damage_multiplier_status = 1.0
+			clear_effect_source("received_physical_damage")
 
 	if physical_shield_turns > 0:
 		physical_shield_turns -= 1
 		if physical_shield_turns <= 0:
 			current_physical_shield = 0
+			clear_effect_source("physical_shield")
 
 	if magic_shield_turns > 0:
 		magic_shield_turns -= 1
 		if magic_shield_turns <= 0:
 			current_magic_shield = 0
+			clear_effect_source("magic_shield")
 
 	if reflect_turns > 0:
 		reflect_turns -= 1
 		if reflect_turns <= 0:
 			melee_reflect_damage = 0
+			clear_effect_source("reflect")
 
 	if melee_attacker_action_turns > 0:
 		melee_attacker_action_turns -= 1
 		if melee_attacker_action_turns <= 0:
 			melee_attacker_action_multiplier = 1.0
+			clear_effect_source("melee_attacker_action")
 
 	if lifesteal_turns > 0:
 		lifesteal_turns -= 1
 		if lifesteal_turns <= 0:
 			lifesteal_ratio_status = 0.0
+			clear_effect_source("lifesteal")
 
 	if attack_range_bonus_turns > 0:
 		attack_range_bonus_turns -= 1
 		if attack_range_bonus_turns <= 0:
 			attack_range_bonus_status = 0
+			clear_effect_source("attack_range")
 
 	if forced_target_turns > 0:
 		forced_target_turns -= 1
@@ -1069,6 +1686,8 @@ func advance_turn_effects() -> void:
 
 	if stealth_turns_remaining > 0:
 		stealth_turns_remaining -= 1
+		if stealth_turns_remaining <= 0:
+			clear_effect_source("stealth")
 
 	if retarget_cooldown_turns > 0:
 		retarget_cooldown_turns -= 1

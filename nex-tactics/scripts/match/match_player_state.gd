@@ -47,6 +47,7 @@ var last_round_result_text: String = ""
 var round_history: Array[Dictionary] = []
 var current_table_id: String = ""
 var current_round_phase: String = "LOBBY"
+var last_bot_prep_debug: Dictionary = {}
 var formation_state: FormationState = FormationState.new()
 var shop_state: ShopState = ShopState.new()
 var owned_card_paths: Array[String]:
@@ -93,6 +94,7 @@ func setup(
 	round_history.clear()
 	current_table_id = ""
 	current_round_phase = "LOBBY"
+	last_bot_prep_debug = {}
 	formation_state.clear()
 	shop_state.reset()
 	return self
@@ -102,6 +104,12 @@ func set_board_snapshot(snapshot: Dictionary) -> void:
 
 func get_board_snapshot() -> Dictionary:
 	return board_snapshot.duplicate(true)
+
+func set_last_bot_prep_debug(debug_payload: Dictionary) -> void:
+	last_bot_prep_debug = debug_payload.duplicate(true)
+
+func get_last_bot_prep_debug() -> Dictionary:
+	return last_bot_prep_debug.duplicate(true)
 
 func register_damage_dealt(value: int) -> int:
 	if value <= 0:

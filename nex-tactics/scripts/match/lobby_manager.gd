@@ -19,8 +19,13 @@ const LIVE_TABLE_PREP_SECONDS := 1.2
 const LIVE_TABLE_ACTION_STEP_SECONDS := BattleConfigScript.LIVE_TABLE_ACTION_STEP_SECONDS
 const LIVE_TABLE_OBSERVED_ACTION_STEP_SECONDS := BattleConfigScript.LIVE_TABLE_OBSERVED_ACTION_STEP_SECONDS
 const LIVE_TABLE_RESULT_HOLD_SECONDS := 0.9
+const CARD_SHOP_INTERVAL_ROUNDS := 6
+const THRAX_PREVIEW_GOLD_ATTACK_RATIO := 0.01
+const THRAX_PREVIEW_GOLD_DEFENSE_RATIO := 0.008
+const THRAX_PREVIEW_SELF_DEFENSE_RATIO := 0.016
 const CombatInstanceScript := preload("res://scripts/match/combat_instance.gd")
 const GameDataScript := preload("res://autoload/game_data.gd")
+const BotMacroBrainScript := preload("res://scripts/ai/bot_macro_brain.gd")
 
 var players: Dictionary = {}
 var player_order: Array[String] = []
@@ -32,6 +37,7 @@ var live_tables: Dictionary = {}
 var combat_instances: Dictionary = {}
 var player_table_map: Dictionary = {}
 var bot_prep_planner: EnemyPrepPlanner = EnemyPrepPlanner.new()
+var bot_macro_brain = BotMacroBrainScript.new().setup(bot_prep_planner)
 var game_data_helper = GameDataScript.new()
 var elimination_order: Array[String] = []
 var match_winner_id: String = ""
@@ -360,6 +366,26 @@ func add_owned_card_to_player(player_id: String, card_path: String, claimed_roun
 		player_state.last_shop_round_claimed = claimed_round
 	return added
 
+func is_card_shop_round(round_number: int) -> bool:
+	return round_number > 0 and round_number % CARD_SHOP_INTERVAL_ROUNDS == 0
+
+func rebuild_bot_prep_state(player_id: String, round_number: int) -> Dictionary:
+	var player_state: MatchPlayerState = get_player(player_id)
+	if player_state == null:
+		return {}
+	var lineup: Dictionary = _build_background_lineup(player_state, round_number)
+	return {
+		"player_id": player_id,
+		"lineup": lineup,
+		"prep_debug": player_state.get_last_bot_prep_debug(),
+	}
+
+func get_bot_prep_debug(player_id: String) -> Dictionary:
+	var player_state: MatchPlayerState = get_player(player_id)
+	if player_state == null:
+		return {}
+	return player_state.get_last_bot_prep_debug()
+
 func build_card_shop_offer_details(player_id: String, round_number: int, max_options: int = 2) -> Dictionary:
 	var player_state: MatchPlayerState = get_player(player_id)
 	if player_state == null:
@@ -396,7 +422,7 @@ func build_card_shop_offer_details(player_id: String, round_number: int, max_opt
 			"reason": "invalid_round",
 		}
 
-	if round_number % 3 != 0:
+	if not is_card_shop_round(round_number):
 		return {
 			"player_id": player_id,
 			"round_number": round_number,
@@ -410,7 +436,7 @@ func build_card_shop_offer_details(player_id: String, round_number: int, max_opt
 			"deck_path": player_state.deck_path,
 			"card_pool_count": 0,
 			"valid_card_pool_count": 0,
-			"reason": "round_not_multiple_of_3",
+			"reason": "round_not_shop_round",
 		}
 
 	var deck_data: DeckData = _load_deck_data(player_state.deck_path)
@@ -442,14 +468,13 @@ func build_card_shop_offer_details(player_id: String, round_number: int, max_opt
 			continue
 		available_paths.append(resolved_path)
 
-	available_paths.sort_custom(_sort_card_offer_paths.bind(player_state.slot_index, round_number))
+	available_paths = _shuffle_card_offer_paths(available_paths, player_state.slot_index, round_number)
 	var offer_paths: Array[String] = _trim_card_offer_paths(available_paths, max_options)
 
 	var reason: String = "ok"
 	if offer_paths.is_empty():
-		offer_paths = _trim_card_offer_paths(valid_card_pool_paths, max_options)
-		if not offer_paths.is_empty():
-			reason = "fallback_full_valid_pool"
+		if owned_paths.size() >= valid_card_pool_paths.size() and not valid_card_pool_paths.is_empty():
+			reason = "all_unique_cards_owned"
 		elif not raw_card_pool_paths.is_empty():
 			reason = "no_valid_card_resources"
 		else:
@@ -512,7 +537,7 @@ func _trim_card_offer_paths(source_paths: Array[String], max_options: int) -> Ar
 
 func grant_periodic_cards_for_round(round_number: int, excluded_player_ids: Array[String] = []) -> Array[Dictionary]:
 	var granted_entries: Array[Dictionary] = []
-	if round_number <= 0 or round_number % 3 != 0:
+	if not is_card_shop_round(round_number):
 		return granted_entries
 
 	for player_id in player_order:
@@ -1107,6 +1132,8 @@ func _finalize_live_table_result(table: Dictionary) -> void:
 	var damage: int = 0
 	var winner_survivors: int = -1
 	var loser_survivors: int = -1
+	var player_a_master_survived: bool = _background_master_survived(sim_units, GameEnums.TeamSide.PLAYER)
+	var player_b_master_survived: bool = _background_master_survived(sim_units, GameEnums.TeamSide.ENEMY)
 	var player_a_result_text: String = "Empate ao vivo contra %s" % player_b.display_name
 	var player_b_result_text: String = "Empate ao vivo contra %s" % player_a.display_name
 
@@ -1160,12 +1187,24 @@ func _finalize_live_table_result(table: Dictionary) -> void:
 	table["damage"] = damage
 	table["winner_survivors"] = winner_survivors
 	table["loser_survivors"] = loser_survivors
+	table["player_a_master_survived"] = player_a_master_survived
+	table["player_b_master_survived"] = player_b_master_survived
 	table["player_a_result_text"] = player_a_result_text
 	table["player_b_result_text"] = player_b_result_text
 	table["result_text"] = player_a_result_text
 	table["result_time_remaining"] = LIVE_TABLE_RESULT_HOLD_SECONDS
 	player_a.record_round_result(int(table.get("round_number", 0)), player_a_result_text, winner_id == player_a.player_id, damage if loser_id == player_a.player_id else 0)
 	player_b.record_round_result(int(table.get("round_number", 0)), player_b_result_text, winner_id == player_b.player_id, damage if loser_id == player_b.player_id else 0)
+	player_a.apply_master_round_progression(
+		winner_id == player_a.player_id,
+		loser_id == player_a.player_id,
+		player_a_master_survived
+	)
+	player_b.apply_master_round_progression(
+		winner_id == player_b.player_id,
+		loser_id == player_b.player_id,
+		player_b_master_survived
+	)
 	player_a.set_round_phase("RESULTADO")
 	player_b.set_round_phase("RESULTADO")
 	_sync_combat_instance_from_live_table(table)
@@ -1267,15 +1306,47 @@ func _apply_live_table_cards_to_team(sim_units: Array[Dictionary], team_side: in
 	if owner_state == null or sim_units.is_empty():
 		return ""
 
-	var applied_lines: Array[String] = []
+	var card_entries: Array[Dictionary] = []
 	for card_path in owner_state.get_owned_card_paths():
 		var card_data: CardData = _load_card_data(card_path)
+		if card_data == null:
+			continue
+		card_entries.append({
+			"card_data": card_data,
+			"card_path": card_path,
+		})
+	if card_entries.is_empty():
+		return ""
+
+	var applied_lines: Array[String] = []
+	var support_plan: Dictionary = build_bot_support_orders(
+		owner_state,
+		card_entries,
+		_filter_live_table_units_for_team(sim_units, team_side),
+		_filter_live_table_units_for_team(sim_units, _opposite_team(team_side)),
+		team_side,
+		owner_state.player_id
+	)
+	for order in support_plan.get("orders", []):
+		var card_data: CardData = order.get("card_data", null)
 		if card_data == null:
 			continue
 		var effect_text: String = _apply_live_table_card_effect(sim_units, team_side, owner_state, card_data)
 		if not effect_text.is_empty():
 			applied_lines.append(effect_text)
 	return _join_strings(applied_lines, " | ")
+
+func _filter_live_table_units_for_team(sim_units: Array[Dictionary], team_side: int) -> Array[Dictionary]:
+	var filtered_units: Array[Dictionary] = []
+	for unit_entry in sim_units:
+		if int(unit_entry.get("team_side", GameEnums.TeamSide.PLAYER)) != team_side:
+			continue
+		if not bool(unit_entry.get("alive", true)):
+			continue
+		if int(unit_entry.get("current_hp", 0)) <= 0:
+			continue
+		filtered_units.append(unit_entry)
+	return filtered_units
 
 func _apply_live_table_card_effect(
 	sim_units: Array[Dictionary],
@@ -1486,13 +1557,11 @@ func resolve_background_pairings(
 		if player_a.eliminated or player_b.eliminated:
 			continue
 
-		var snapshot_a: Dictionary = player_a.get_board_snapshot()
-		if snapshot_a.is_empty():
-			var lineup_a: Dictionary = _build_background_lineup(player_a, round_number)
-			var lineup_b: Dictionary = _build_background_lineup(player_b, round_number)
-			snapshot_a = _build_table_snapshot(player_a, player_b, lineup_a, lineup_b, round_number, "PREPARACAO", "")
-			player_a.set_board_snapshot(snapshot_a)
-			player_b.set_board_snapshot(_build_table_snapshot(player_b, player_a, lineup_b, lineup_a, round_number, "PREPARACAO", ""))
+		var lineup_a: Dictionary = _build_background_lineup(player_a, round_number)
+		var lineup_b: Dictionary = _build_background_lineup(player_b, round_number)
+		var snapshot_a: Dictionary = _build_table_snapshot(player_a, player_b, lineup_a, lineup_b, round_number, "PREPARACAO", "")
+		player_a.set_board_snapshot(snapshot_a)
+		player_b.set_board_snapshot(_build_table_snapshot(player_b, player_a, lineup_b, lineup_a, round_number, "PREPARACAO", ""))
 
 		var result: Dictionary = _resolve_background_match(player_a, player_b, snapshot_a, round_number)
 		_apply_background_match_result(player_a, player_b, result)
@@ -1508,29 +1577,68 @@ func _apply_background_match_result(
 	if player_a == null or player_b == null:
 		return
 
+	var round_number: int = int(result.get("round_number", 0))
+	var winner_id: String = str(result.get("winner_id", ""))
 	var loser_id: String = str(result.get("loser_id", ""))
 	var damage: int = int(result.get("damage", 0))
-	var winner_state: MatchPlayerState = get_player(str(result.get("winner_id", "")))
-	var loser_state: MatchPlayerState = null
-	if not loser_id.is_empty():
-		loser_state = get_player(loser_id)
 	apply_post_combat_damage(
-		str(result.get("winner_id", "")),
+		winner_id,
 		loser_id,
 		damage,
-		int(result.get("round_number", 0)),
+		round_number,
 		true
 	)
 
 	player_a.eliminated = player_a.current_life <= 0
 	player_b.eliminated = player_b.current_life <= 0
-	player_a.last_round_result_text = str(result.get("player_a_result_text", ""))
-	player_b.last_round_result_text = str(result.get("player_b_result_text", ""))
+	var player_a_result_text: String = str(result.get("player_a_result_text", ""))
+	var player_b_result_text: String = str(result.get("player_b_result_text", ""))
+	player_a.last_round_result_text = player_a_result_text
+	player_b.last_round_result_text = player_b_result_text
+	player_a.record_round_result(round_number, player_a_result_text, winner_id == player_a.player_id, damage if loser_id == player_a.player_id else 0)
+	player_b.record_round_result(round_number, player_b_result_text, winner_id == player_b.player_id, damage if loser_id == player_b.player_id else 0)
+	player_a.apply_master_round_progression(
+		winner_id == player_a.player_id,
+		loser_id == player_a.player_id,
+		bool(result.get("player_a_master_survived", false))
+	)
+	player_b.apply_master_round_progression(
+		winner_id == player_b.player_id,
+		loser_id == player_b.player_id,
+		bool(result.get("player_b_master_survived", false))
+	)
+	player_a.set_round_phase("RESULTADO")
+	player_b.set_round_phase("RESULTADO")
 
 	var snapshot_a: Dictionary = result.get("snapshot_a", player_a.get_board_snapshot())
 	var snapshot_b: Dictionary = result.get("snapshot_b", player_b.get_board_snapshot())
-	snapshot_a["life"] = player_a.current_life
-	snapshot_b["life"] = player_b.current_life
+	var sim_units: Array[Dictionary] = result.get("sim_units", [])
+	if not sim_units.is_empty():
+		snapshot_a = _build_snapshot_from_sim_units(
+			player_a,
+			player_b,
+			sim_units,
+			GameEnums.TeamSide.PLAYER,
+			round_number,
+			"RESULTADO",
+			player_a_result_text,
+			str(result.get("card_summary_a", "")),
+			[]
+		)
+		snapshot_b = _build_snapshot_from_sim_units(
+			player_b,
+			player_a,
+			sim_units,
+			GameEnums.TeamSide.ENEMY,
+			round_number,
+			"RESULTADO",
+			player_b_result_text,
+			str(result.get("card_summary_b", "")),
+			[]
+		)
+	else:
+		snapshot_a["life"] = player_a.current_life
+		snapshot_b["life"] = player_b.current_life
 	player_a.set_board_snapshot(snapshot_a)
 	player_b.set_board_snapshot(snapshot_b)
 
@@ -1544,6 +1652,25 @@ func _build_background_lineup(player_state: MatchPlayerState, round_number: int)
 
 	var deck_data: DeckData = _load_deck_data(player_state.deck_path)
 	if deck_data == null:
+		var missing_deck_debug: Dictionary = {
+			"planner_ran": false,
+			"round_number": round_number,
+			"player_id": player_state.player_id,
+			"player_name": player_state.display_name,
+			"master_level": player_state.player_level,
+			"field_limit": player_state.get_field_unit_limit(),
+			"field_before": 0,
+			"field_after": 0,
+			"gold_before": player_state.current_gold,
+			"gold_after": player_state.current_gold,
+			"eligible_candidate_count": 0,
+			"affordable_candidate_count": 0,
+			"attempted_fill": false,
+			"empty_slots_remaining": maxi(0, player_state.get_field_unit_limit()),
+			"reason": "missing_deck_data",
+			"reason_detail": player_state.deck_path,
+		}
+		_store_bot_prep_debug(player_state, missing_deck_debug)
 		return {
 			"player_id": player_state.player_id,
 			"player_name": player_state.display_name,
@@ -1554,54 +1681,47 @@ func _build_background_lineup(player_state: MatchPlayerState, round_number: int)
 			"non_master_count": 0,
 			"power_rating": 0,
 			"master_name": "Sem mestre",
+			"prep_debug": missing_deck_debug,
 		}
 
 	var available_gold: int = maxi(0, player_state.current_gold)
-	var effective_gold: int = _effective_gold_budget(available_gold, round_number)
-	var field_limit: int = _effective_field_limit(BattleConfigScript.MAX_FIELD_UNITS, round_number)
+	var field_limit: int = clampi(player_state.get_field_unit_limit(), 0, BattleConfigScript.MAX_FIELD_UNITS)
 	var units: Array[Dictionary] = []
-	var total_power: int = _estimate_owned_cards_power_bonus(player_state.get_owned_card_paths())
-	var planner_current_units: Array[Dictionary] = []
 	var candidate_entries: Array[Dictionary] = []
 	var total_candidate_power: int = 0
 	var valid_candidate_count: int = 0
 
 	var master_data: UnitData = _load_unit_data(deck_data.master_data_path)
+	var master_coord := Vector2i(3, BattleConfigScript.BOARD_HEIGHT - 1)
 	if master_data != null:
-		var master_coord := Vector2i(3, BattleConfigScript.BOARD_HEIGHT - 1)
-		units.append(_build_snapshot_unit_entry(
+		units.append(_build_snapshot_unit_entry_for_player(
+			player_state,
 			master_data,
 			deck_data.master_data_path,
 			master_coord,
 			true,
 			GameEnums.TeamSide.PLAYER
 		))
-		planner_current_units.append({
-			"unit_data": master_data,
-			"unit_id": master_data.id,
-			"display_name": master_data.display_name,
-			"race": master_data.race,
-			"class_type": master_data.class_type,
-			"cost": master_data.get_effective_cost(),
-			"coord": master_coord,
-			"team_side": GameEnums.TeamSide.PLAYER,
-			"is_master": true,
-			"attack_range": master_data.attack_range,
-			"physical_attack": master_data.physical_attack,
-			"magic_attack": master_data.magic_attack,
-			"physical_defense": master_data.physical_defense,
-			"magic_defense": master_data.magic_defense,
-			"max_hp": master_data.max_hp,
-			"current_hp": master_data.max_hp,
-		})
-		total_power += _estimate_unit_power(master_data, true, player_state.slot_index, round_number)
 
+	var planner_current_units: Array[Dictionary] = _load_background_formation_units(
+		player_state,
+		deck_data,
+		GameEnums.TeamSide.PLAYER
+	)
+	var selected_ids: Dictionary = {}
+	for unit_entry in planner_current_units:
+		var unit_data: UnitData = unit_entry.get("unit_data", null)
+		if unit_data == null:
+			continue
+		selected_ids[unit_data.id] = true
 	for unit_path_variant in deck_data.unit_pool_paths:
 		var unit_path: String = str(unit_path_variant)
 		if unit_path.is_empty():
 			continue
 		var unit_data: UnitData = _load_unit_data(unit_path)
 		if unit_data == null:
+			continue
+		if selected_ids.has(unit_data.id):
 			continue
 		candidate_entries.append({
 			"slot_index": -1,
@@ -1615,51 +1735,248 @@ func _build_background_lineup(player_state: MatchPlayerState, round_number: int)
 	if valid_candidate_count > 0:
 		deck_average_power = float(total_candidate_power) / float(valid_candidate_count)
 
-	var purchase_result: Dictionary = bot_prep_planner.build_purchase_plan(
-		candidate_entries,
-		planner_current_units,
-		effective_gold,
-		0,
-		field_limit,
-		GameEnums.TeamSide.PLAYER,
-		master_data,
-		deck_average_power,
-		player_state.player_id
-	)
-	var budget_gold_left: int = int(purchase_result.get("gold_left", effective_gold))
-	var spent_gold: int = maxi(0, effective_gold - budget_gold_left)
-	player_state.set_current_gold_capped(available_gold - spent_gold, "bot_prep_remaining", false)
-	var purchase_orders: Array[Dictionary] = purchase_result.get("orders", [])
-	for candidate in purchase_orders:
-		var unit_data: UnitData = candidate.get("unit_data", null)
-		var unit_path: String = str(candidate.get("unit_path", ""))
+	var macro_decision: Dictionary = bot_macro_brain.build_decision({
+		"mode": "prep",
+		"candidate_entries": candidate_entries,
+		"current_units": planner_current_units,
+		"available_gold": available_gold,
+		"field_limit": field_limit,
+		"owner_team_side": GameEnums.TeamSide.PLAYER,
+		"master_data": master_data,
+		"deck_average_power": deck_average_power,
+		"debug_tag": player_state.player_id,
+		"pending_promotions": player_state.get_pending_master_promotion_count(),
+	})
+	var formation_plan: Dictionary = macro_decision.get("formation_plan", {})
+	if formation_plan.is_empty():
+		formation_plan = bot_prep_planner.build_formation_plan(
+			candidate_entries,
+			planner_current_units,
+			available_gold,
+			field_limit,
+			GameEnums.TeamSide.PLAYER,
+			master_data,
+			deck_average_power,
+			player_state.player_id
+		)
+	var selected_units: Array[Dictionary] = formation_plan.get("selected_units", [])
+	_auto_apply_bot_promotions_to_units(player_state, selected_units)
+	if not player_state.is_local_player:
+		_sync_background_bot_formation(player_state, deck_data, selected_units, master_coord)
+
+	var budget_gold_left: int = int(formation_plan.get("gold_left", available_gold))
+	var spent_gold: int = maxi(0, int(formation_plan.get("spent_gold", available_gold - budget_gold_left)))
+	if not player_state.is_local_player:
+		player_state.set_current_gold_capped(available_gold - spent_gold, "bot_prep_remaining", false)
+	for unit_entry in selected_units:
+		var unit_data: UnitData = unit_entry.get("unit_data", null)
+		var unit_path: String = str(unit_entry.get("unit_path", ""))
 		if unit_data == null:
 			continue
-		var target_coord: Vector2i = candidate.get("coord", Vector2i(-1, -1))
+		var target_coord: Vector2i = unit_entry.get("coord", Vector2i(-1, -1))
 		if not _is_valid_snapshot_coord(target_coord):
 			continue
 
-		units.append(_build_snapshot_unit_entry(
+		units.append(_build_snapshot_unit_entry_for_player(
+			player_state,
 			unit_data,
 			unit_path,
 			target_coord,
 			false,
 			GameEnums.TeamSide.PLAYER
 		))
-		total_power += _estimate_unit_power(unit_data, false, player_state.slot_index, round_number)
 
 	_apply_background_deck_passives(units, player_state.current_gold)
+	var total_power: int = _estimate_owned_cards_power_bonus(player_state.get_owned_card_paths())
+	for unit_entry in units:
+		total_power += _estimate_snapshot_unit_power(unit_entry)
+	var prep_debug: Dictionary = _build_bot_prep_debug_payload(
+		player_state,
+		round_number,
+		available_gold,
+		player_state.current_gold,
+		field_limit,
+		planner_current_units,
+		candidate_entries,
+		formation_plan,
+		selected_units,
+		macro_decision
+	)
+	_store_bot_prep_debug(player_state, prep_debug)
 	return {
 		"player_id": player_state.player_id,
 		"player_name": player_state.display_name,
 		"gold": player_state.current_gold,
-		"gold_budget": effective_gold,
+		"gold_budget": available_gold,
 		"units": units,
 		"unit_count": units.size(),
-		"non_master_count": purchase_orders.size(),
+		"non_master_count": selected_units.size(),
 		"power_rating": total_power,
 		"master_name": str(units[0].get("display_name", "Mestre")) if not units.is_empty() else "Mestre",
+		"prep_debug": prep_debug,
 	}
+
+func _build_bot_prep_debug_payload(
+	player_state: MatchPlayerState,
+	round_number: int,
+	gold_before: int,
+	gold_after: int,
+	field_limit: int,
+	planner_current_units: Array[Dictionary],
+	candidate_entries: Array[Dictionary],
+	formation_plan: Dictionary,
+	selected_units: Array[Dictionary],
+	macro_decision: Dictionary = {}
+) -> Dictionary:
+	var eligible_candidate_count: int = candidate_entries.size()
+	var affordable_candidate_count: int = 0
+	var cheapest_candidate_cost: int = -1
+	for candidate in candidate_entries:
+		var unit_data: UnitData = candidate.get("unit_data", null)
+		if unit_data == null:
+			continue
+		var unit_cost: int = unit_data.get_effective_cost()
+		if cheapest_candidate_cost < 0 or unit_cost < cheapest_candidate_cost:
+			cheapest_candidate_cost = unit_cost
+		if unit_cost <= gold_before:
+			affordable_candidate_count += 1
+
+	var field_before: int = planner_current_units.size()
+	var field_after: int = selected_units.size()
+	var attempted_fill: bool = bool(formation_plan.get("fill_attempted", false))
+	var empty_slots_remaining: int = int(formation_plan.get("empty_slots_remaining", maxi(0, field_limit - field_after)))
+	var reason: String = _resolve_bot_prep_reason(
+		field_limit,
+		field_before,
+		field_after,
+		eligible_candidate_count,
+		affordable_candidate_count,
+		formation_plan
+	)
+	var reason_detail: String = str(formation_plan.get("fill_stop_detail", ""))
+	var selected_unit_ids: Array[String] = []
+	for unit_entry in selected_units:
+		var unit_data: UnitData = unit_entry.get("unit_data", null)
+		if unit_data == null:
+			continue
+		selected_unit_ids.append(unit_data.id)
+
+	return {
+		"planner_ran": true,
+		"planner_mode": "macro_formation",
+		"decision_source": str(macro_decision.get("source", "legacy_fallback")),
+		"decision_fallback_used": bool(macro_decision.get("fallback_used", false)),
+		"decision_fallback_reason": str(macro_decision.get("fallback_reason", "")),
+		"decision_states": macro_decision.get("completed_states", []),
+		"round_number": round_number,
+		"player_id": player_state.player_id if player_state != null else "",
+		"player_name": player_state.display_name if player_state != null else "Jogador",
+		"master_level": player_state.player_level if player_state != null else 1,
+		"field_limit": field_limit,
+		"field_before": field_before,
+		"field_after": field_after,
+		"gold_before": gold_before,
+		"gold_after": gold_after,
+		"eligible_candidate_count": eligible_candidate_count,
+		"affordable_candidate_count": affordable_candidate_count,
+		"cheapest_candidate_cost": cheapest_candidate_cost,
+		"attempted_fill": attempted_fill,
+		"slots_added": int(formation_plan.get("slots_added", maxi(0, field_after - field_before))),
+		"empty_slots_remaining": empty_slots_remaining,
+		"reason": reason,
+		"reason_detail": reason_detail,
+		"cap_growth_opened_slot": field_limit > field_before,
+		"reacted_to_cap_growth": field_after > field_before,
+		"selected_unit_ids": selected_unit_ids,
+	}
+
+func _resolve_bot_prep_reason(
+	field_limit: int,
+	field_before: int,
+	field_after: int,
+	eligible_candidate_count: int,
+	affordable_candidate_count: int,
+	formation_plan: Dictionary
+) -> String:
+	var planner_reason: String = str(formation_plan.get("fill_stop_reason", ""))
+	if not planner_reason.is_empty():
+		return planner_reason
+	if field_limit <= 0:
+		return "invalid_field_limit"
+	if field_after >= field_limit:
+		return "filled_to_cap" if field_before < field_limit else "already_at_cap"
+	if eligible_candidate_count <= 0:
+		return "no_eligible_unit"
+	if affordable_candidate_count <= 0:
+		return "insufficient_gold"
+	return "planner_or_sync_blocked"
+
+func build_bot_support_orders(
+	player_state: MatchPlayerState,
+	card_entries: Array[Dictionary],
+	allied_units: Array[Dictionary],
+	enemy_units: Array[Dictionary],
+	owner_team_side: int,
+	debug_tag: String = ""
+) -> Dictionary:
+	if player_state == null or card_entries.is_empty():
+		return {
+			"orders": [],
+			"selected_support_paths": [],
+			"decision": {
+				"source": "legacy_fallback",
+				"fallback_used": true,
+				"fallback_reason": "missing_support_context",
+			},
+		}
+
+	var macro_decision: Dictionary = bot_macro_brain.build_decision({
+		"mode": "support",
+		"card_entries": card_entries,
+		"allied_units": allied_units,
+		"enemy_units": enemy_units,
+		"owner_team_side": owner_team_side,
+		"debug_tag": debug_tag if not debug_tag.is_empty() else player_state.player_id,
+	})
+	return {
+		"orders": macro_decision.get("support_orders", []),
+		"selected_support_paths": macro_decision.get("selected_support_paths", []),
+		"decision": macro_decision,
+	}
+
+func _store_bot_prep_debug(player_state: MatchPlayerState, debug_payload: Dictionary) -> void:
+	if player_state == null:
+		return
+	var previous_debug: Dictionary = player_state.get_last_bot_prep_debug()
+	player_state.set_last_bot_prep_debug(debug_payload)
+	if (
+		int(previous_debug.get("round_number", -1)) == int(debug_payload.get("round_number", -2))
+		and int(previous_debug.get("gold_before", -1)) == int(debug_payload.get("gold_before", -2))
+		and int(previous_debug.get("gold_after", -1)) == int(debug_payload.get("gold_after", -2))
+		and int(previous_debug.get("field_before", -1)) == int(debug_payload.get("field_before", -2))
+		and int(previous_debug.get("field_after", -1)) == int(debug_payload.get("field_after", -2))
+		and str(previous_debug.get("reason", "")) == str(debug_payload.get("reason", "__different__"))
+	):
+		return
+	print(_format_bot_prep_debug_log(debug_payload))
+
+func _format_bot_prep_debug_log(debug_payload: Dictionary) -> String:
+	return "BOT_PREP round=%d player=%s level=%d cap=%d field_before=%d field_after=%d gold_before=%d gold_after=%d eligible=%d affordable=%d tried_fill=%s empty=%d reason=%s detail=%s" % [
+		int(debug_payload.get("round_number", 0)),
+		str(debug_payload.get("player_name", debug_payload.get("player_id", "bot"))),
+		int(debug_payload.get("master_level", 1)),
+		int(debug_payload.get("field_limit", 0)),
+		int(debug_payload.get("field_before", 0)),
+		int(debug_payload.get("field_after", 0)),
+		int(debug_payload.get("gold_before", 0)),
+		int(debug_payload.get("gold_after", 0)),
+		int(debug_payload.get("eligible_candidate_count", 0)),
+		int(debug_payload.get("affordable_candidate_count", 0)),
+		str(debug_payload.get("attempted_fill", false)),
+		int(debug_payload.get("empty_slots_remaining", 0)),
+		str(debug_payload.get("reason", "")),
+		str(debug_payload.get("reason_detail", "")),
+	]
 
 func _apply_background_deck_passives(units: Array[Dictionary], saved_gold: int = 0) -> void:
 	var has_thrax_master: bool = false
@@ -1672,12 +1989,25 @@ func _apply_background_deck_passives(units: Array[Dictionary], saved_gold: int =
 
 	for unit_entry in units:
 		var base_attack: int = int(unit_entry.get("physical_attack", 0))
-		if base_attack <= 0:
-			continue
-		var bonus_attack: int = int(round(float(base_attack) * float(saved_gold) * 0.01))
-		if bonus_attack <= 0:
-			bonus_attack = 1
-		unit_entry["physical_attack"] = base_attack + bonus_attack
+		var base_defense: int = int(unit_entry.get("physical_defense", 0))
+		var bonus_attack: int = 0
+		var bonus_defense: int = 0
+		var extra_master_defense: int = 0
+		if base_attack > 0:
+			bonus_attack = int(round(float(base_attack) * float(saved_gold) * THRAX_PREVIEW_GOLD_ATTACK_RATIO))
+			if bonus_attack <= 0:
+				bonus_attack = 1
+			unit_entry["physical_attack"] = base_attack + bonus_attack
+		if base_defense > 0:
+			bonus_defense = int(round(float(base_defense) * float(saved_gold) * THRAX_PREVIEW_GOLD_DEFENSE_RATIO))
+			if bonus_defense <= 0:
+				bonus_defense = 1
+		if str(unit_entry.get("unit_id", "")) == "thrax_master" and base_defense > 0:
+			extra_master_defense = int(round(float(base_defense) * float(saved_gold) * THRAX_PREVIEW_SELF_DEFENSE_RATIO))
+			if extra_master_defense <= 0:
+				extra_master_defense = 1
+		if bonus_defense > 0 or extra_master_defense > 0:
+			unit_entry["physical_defense"] = base_defense + bonus_defense + extra_master_defense
 
 func _apply_round_reward_cards(winner_state: MatchPlayerState, loser_state: MatchPlayerState, damage: int) -> void:
 	if winner_state == null:
@@ -1748,6 +2078,7 @@ func _build_table_snapshot(
 		"streak": viewer_state.streak_value if viewer_state != null else 0,
 		"player_level": viewer_state.player_level if viewer_state != null else 1,
 		"card_summary": card_summary,
+		"prep_debug": viewer_lineup.get("prep_debug", viewer_state.get_last_bot_prep_debug() if viewer_state != null else {}),
 		"recent_events": recent_events,
 		"summary": _build_snapshot_summary(units),
 		"result_text": result_text,
@@ -1780,6 +2111,7 @@ func _build_empty_snapshot(player_state: MatchPlayerState, round_number: int, ph
 		"streak": player_state.streak_value if player_state != null else 0,
 		"player_level": player_state.player_level if player_state != null else 1,
 		"card_summary": "",
+		"prep_debug": player_state.get_last_bot_prep_debug() if player_state != null else {},
 		"recent_events": [],
 		"summary": "Sem unidades em campo.",
 		"result_text": "",
@@ -1821,6 +2153,194 @@ func _build_snapshot_unit_entry(
 		"mana_gain_on_attack": unit_data.mana_gain_on_attack,
 		"mana_gain_on_hit": unit_data.mana_gain_on_hit,
 	}
+
+func _build_snapshot_unit_entry_for_player(
+	player_state: MatchPlayerState,
+	unit_data: UnitData,
+	unit_path: String,
+	coord: Vector2i,
+	is_master: bool,
+	team_side: int
+) -> Dictionary:
+	var unit_entry: Dictionary = _build_snapshot_unit_entry(
+		unit_data,
+		unit_path,
+		coord,
+		is_master,
+		team_side
+	)
+	return _apply_player_promotion_bonus_to_unit_entry(player_state, unit_entry)
+
+func _build_background_planner_unit_entry(
+	player_state: MatchPlayerState,
+	unit_data: UnitData,
+	unit_path: String,
+	coord: Vector2i,
+	is_master: bool,
+	team_side: int
+) -> Dictionary:
+	var unit_entry: Dictionary = _build_snapshot_unit_entry_for_player(
+		player_state,
+		unit_data,
+		unit_path,
+		coord,
+		is_master,
+		team_side
+	)
+	unit_entry["unit_data"] = unit_data
+	unit_entry["race"] = unit_data.race
+	unit_entry["class_type"] = unit_data.class_type
+	return unit_entry
+
+func _apply_player_promotion_bonus_to_unit_entry(player_state: MatchPlayerState, unit_entry: Dictionary) -> Dictionary:
+	if player_state == null or bool(unit_entry.get("is_master", false)):
+		return unit_entry
+	var promotion_bonus: Dictionary = player_state.get_unit_promotion_bonus(str(unit_entry.get("unit_id", "")))
+	if promotion_bonus.is_empty():
+		return unit_entry
+	unit_entry["max_hp"] = int(unit_entry.get("max_hp", 0)) + int(promotion_bonus.get("hp_bonus", 0))
+	unit_entry["current_hp"] = int(unit_entry.get("current_hp", 0)) + int(promotion_bonus.get("hp_bonus", 0))
+	unit_entry["physical_attack"] = int(unit_entry.get("physical_attack", 0)) + int(promotion_bonus.get("physical_attack_bonus", 0))
+	unit_entry["magic_attack"] = int(unit_entry.get("magic_attack", 0)) + int(promotion_bonus.get("magic_attack_bonus", 0))
+	unit_entry["physical_defense"] = int(unit_entry.get("physical_defense", 0)) + int(promotion_bonus.get("physical_defense_bonus", 0))
+	unit_entry["magic_defense"] = int(unit_entry.get("magic_defense", 0)) + int(promotion_bonus.get("magic_defense_bonus", 0))
+	return unit_entry
+
+func _load_background_formation_units(
+	player_state: MatchPlayerState,
+	deck_data: DeckData,
+	team_side: int
+) -> Array[Dictionary]:
+	var units: Array[Dictionary] = []
+	if player_state == null or deck_data == null:
+		return units
+
+	for entry in player_state.formation_state.get_ordered_entries(false):
+		var unit_path: String = str(entry.get("unit_path", ""))
+		var unit_id: String = str(entry.get("unit_id", ""))
+		if not _deck_contains_unit(deck_data, unit_path, unit_id):
+			continue
+		var unit_data: UnitData = _load_unit_data(unit_path)
+		if unit_data == null:
+			continue
+		var stored_coord: Vector2i = entry.get("home_coord", Vector2i(-1, -1))
+		var self_view_coord: Vector2i = _mirror_coord_for_opponent_view(stored_coord)
+		if not _is_valid_snapshot_coord(self_view_coord):
+			self_view_coord = _choose_snapshot_coord(unit_data.class_type, _collect_snapshot_coords(units), player_state.slot_index)
+		units.append(_build_background_planner_unit_entry(
+			player_state,
+			unit_data,
+			unit_path,
+			self_view_coord,
+			false,
+			team_side
+		))
+	return units
+
+func _sync_background_bot_formation(
+	player_state: MatchPlayerState,
+	deck_data: DeckData,
+	selected_units: Array[Dictionary],
+	master_coord: Vector2i
+) -> void:
+	if player_state == null or deck_data == null:
+		return
+	player_state.formation_state.clear()
+	var master_data: UnitData = _load_unit_data(deck_data.master_data_path)
+	if master_data != null:
+		player_state.formation_state.register_unit(
+			master_data.id,
+			deck_data.master_data_path,
+			_mirror_coord_for_opponent_view(master_coord),
+			true
+		)
+	for unit_entry in selected_units:
+		var unit_data: UnitData = unit_entry.get("unit_data", null)
+		var unit_path: String = str(unit_entry.get("unit_path", ""))
+		if unit_data == null or unit_path.is_empty():
+			continue
+		var coord: Vector2i = unit_entry.get("coord", Vector2i(-1, -1))
+		if not _is_valid_snapshot_coord(coord):
+			continue
+		player_state.formation_state.register_unit(
+			unit_data.id,
+			unit_path,
+			_mirror_coord_for_opponent_view(coord),
+			false
+		)
+
+func _auto_apply_bot_promotions_to_units(player_state: MatchPlayerState, selected_units: Array[Dictionary]) -> void:
+	if player_state == null or selected_units.is_empty():
+		return
+	while player_state.has_pending_master_promotion():
+		var best_index: int = _find_best_background_promotion_candidate_index(selected_units)
+		if best_index < 0:
+			return
+		var selected_entry: Dictionary = selected_units[best_index]
+		var unit_data: UnitData = selected_entry.get("unit_data", null)
+		if unit_data == null:
+			return
+		var promotion_result: Dictionary = player_state.apply_master_promotion_to_unit(
+			unit_data.id,
+			unit_data.class_type,
+			str(selected_entry.get("display_name", unit_data.display_name))
+		)
+		if not bool(promotion_result.get("ok", false)):
+			return
+		var granted_bonus: Dictionary = promotion_result.get("granted_bonus", {})
+		selected_entry["max_hp"] = int(selected_entry.get("max_hp", unit_data.max_hp)) + int(granted_bonus.get("hp_bonus", 0))
+		selected_entry["current_hp"] = int(selected_entry.get("current_hp", unit_data.max_hp)) + int(granted_bonus.get("hp_bonus", 0))
+		selected_entry["physical_attack"] = int(selected_entry.get("physical_attack", unit_data.physical_attack)) + int(granted_bonus.get("physical_attack_bonus", 0))
+		selected_entry["magic_attack"] = int(selected_entry.get("magic_attack", unit_data.magic_attack)) + int(granted_bonus.get("magic_attack_bonus", 0))
+		selected_entry["physical_defense"] = int(selected_entry.get("physical_defense", unit_data.physical_defense)) + int(granted_bonus.get("physical_defense_bonus", 0))
+		selected_entry["magic_defense"] = int(selected_entry.get("magic_defense", unit_data.magic_defense)) + int(granted_bonus.get("magic_defense_bonus", 0))
+		selected_units[best_index] = selected_entry
+
+func _find_best_background_promotion_candidate_index(selected_units: Array[Dictionary]) -> int:
+	var best_index: int = -1
+	var best_score: int = -1
+	for index in range(selected_units.size()):
+		var score: int = _estimate_snapshot_unit_power(selected_units[index])
+		if best_index == -1 or score > best_score:
+			best_index = index
+			best_score = score
+	return best_index
+
+func _estimate_snapshot_unit_power(unit_entry: Dictionary) -> int:
+	var power: int = 0
+	power += int(unit_entry.get("max_hp", 0)) * 2
+	power += int(unit_entry.get("physical_attack", 0)) * 5
+	power += int(unit_entry.get("magic_attack", 0)) * 5
+	power += int(unit_entry.get("physical_defense", 0)) * 4
+	power += int(unit_entry.get("magic_defense", 0)) * 4
+	power += int(unit_entry.get("attack_range", 1)) * 3
+	power += int(round(float(unit_entry.get("crit_chance", 0.0)) * 100.0))
+	power += int(unit_entry.get("cost", 0)) * 12
+	if bool(unit_entry.get("is_master", false)):
+		power += 45
+	return maxi(1, power)
+
+func _collect_snapshot_coords(units: Array[Dictionary]) -> Array[Vector2i]:
+	var coords: Array[Vector2i] = []
+	for unit_entry in units:
+		var coord: Vector2i = unit_entry.get("coord", Vector2i(-1, -1))
+		if _is_valid_snapshot_coord(coord):
+			coords.append(coord)
+	return coords
+
+func _deck_contains_unit(deck_data: DeckData, unit_path: String, unit_id: String = "") -> bool:
+	if deck_data == null:
+		return false
+	if not unit_path.is_empty() and deck_data.unit_pool_paths.has(unit_path):
+		return true
+	if unit_id.is_empty():
+		return false
+	for path_variant in deck_data.unit_pool_paths:
+		var resolved_path: String = str(path_variant)
+		var unit_data: UnitData = _load_unit_data(resolved_path)
+		if unit_data != null and unit_data.id == unit_id:
+			return true
+	return false
 
 func _clone_unit_entry_for_view(unit_entry: Dictionary, relative_team_side: int, mirror_coord: bool) -> Dictionary:
 	var cloned_entry: Dictionary = unit_entry.duplicate(true)
@@ -1989,6 +2509,8 @@ func _resolve_background_match(
 	round_number: int
 ) -> Dictionary:
 	var sim_units: Array[Dictionary] = _build_background_sim_units(snapshot_a)
+	var card_summary_a: String = _apply_live_table_cards_to_team(sim_units, GameEnums.TeamSide.PLAYER, player_a)
+	var card_summary_b: String = _apply_live_table_cards_to_team(sim_units, GameEnums.TeamSide.ENEMY, player_b)
 	var acting_team: int = GameEnums.TeamSide.PLAYER if ((player_a.slot_index + player_b.slot_index + round_number) % 2 == 0) else GameEnums.TeamSide.ENEMY
 	var actions_taken: int = 0
 	var reached_action_cap: bool = false
@@ -2028,6 +2550,8 @@ func _resolve_background_match(
 	var damage: int = 0
 	var winner_survivors: int = -1
 	var loser_survivors: int = -1
+	var player_a_master_survived: bool = _background_master_survived(sim_units, GameEnums.TeamSide.PLAYER)
+	var player_b_master_survived: bool = _background_master_survived(sim_units, GameEnums.TeamSide.ENEMY)
 	var player_a_result_text: String = "Empate em segundo plano contra %s" % player_b.display_name
 	var player_b_result_text: String = "Empate em segundo plano contra %s" % player_a.display_name
 
@@ -2067,18 +2591,24 @@ func _resolve_background_match(
 			]
 
 	return {
+		"round_number": round_number,
 		"winner_id": winner_id,
 		"loser_id": loser_id,
 		"damage": damage,
 		"winner_survivors": winner_survivors,
 		"loser_survivors": loser_survivors,
+		"player_a_master_survived": player_a_master_survived,
+		"player_b_master_survived": player_b_master_survived,
 		"player_a_result_text": player_a_result_text,
 		"player_b_result_text": player_b_result_text,
 		"result_text": player_a_result_text,
 		"failsafe_triggered": reached_action_cap,
 		"failsafe_reason": "background_action_cap" if reached_action_cap else "",
-		"snapshot_a": _build_snapshot_from_sim_units(player_a, player_b, sim_units, GameEnums.TeamSide.PLAYER, round_number, "RESULTADO", player_a_result_text),
-		"snapshot_b": _build_snapshot_from_sim_units(player_b, player_a, sim_units, GameEnums.TeamSide.ENEMY, round_number, "RESULTADO", player_b_result_text),
+		"card_summary_a": card_summary_a,
+		"card_summary_b": card_summary_b,
+		"sim_units": sim_units,
+		"snapshot_a": _build_snapshot_from_sim_units(player_a, player_b, sim_units, GameEnums.TeamSide.PLAYER, round_number, "RESULTADO", player_a_result_text, card_summary_a),
+		"snapshot_b": _build_snapshot_from_sim_units(player_b, player_a, sim_units, GameEnums.TeamSide.ENEMY, round_number, "RESULTADO", player_b_result_text, card_summary_b),
 	}
 
 func _build_background_sim_units(snapshot: Dictionary) -> Array[Dictionary]:
@@ -2209,6 +2739,7 @@ func _build_snapshot_from_sim_units(
 		"streak": viewer_state.streak_value if viewer_state != null else 0,
 		"player_level": viewer_state.player_level if viewer_state != null else 1,
 		"card_summary": card_summary,
+		"prep_debug": viewer_state.get_last_bot_prep_debug() if viewer_state != null else {},
 		"recent_events": recent_events,
 		"summary": _build_snapshot_summary(units),
 		"result_text": result_text,
@@ -2656,6 +3187,15 @@ func _background_distance(a: Vector2i, b: Vector2i) -> int:
 func _coord_key(coord: Vector2i) -> String:
 	return "%d:%d" % [coord.x, coord.y]
 
+func _background_master_survived(sim_units: Array[Dictionary], team_side: int) -> bool:
+	for unit_entry in sim_units:
+		if int(unit_entry.get("team_side", GameEnums.TeamSide.PLAYER)) != team_side:
+			continue
+		if not bool(unit_entry.get("is_master", false)):
+			continue
+		return bool(unit_entry.get("alive", false)) and int(unit_entry.get("current_hp", 0)) > 0
+	return false
+
 func _mirror_coord_for_opponent_view(coord: Vector2i) -> Vector2i:
 	return Vector2i(coord.x, BattleConfigScript.BOARD_HEIGHT - 1 - coord.y)
 
@@ -2685,12 +3225,21 @@ func _effective_gold_budget(available_gold: int, round_number: int) -> int:
 		return mini(available_gold, 4)
 	return available_gold
 
-func _sort_card_offer_paths(a: String, b: String, player_seed: int, round_number: int) -> bool:
-	var score_a: int = abs(hash("%s|%d|%d" % [a, player_seed, round_number])) % 1000
-	var score_b: int = abs(hash("%s|%d|%d" % [b, player_seed, round_number])) % 1000
-	if score_a != score_b:
-		return score_a < score_b
-	return a < b
+func _shuffle_card_offer_paths(source_paths: Array[String], player_seed: int, round_number: int) -> Array[String]:
+	var shuffled_paths: Array[String] = source_paths.duplicate()
+	if shuffled_paths.size() <= 1:
+		return shuffled_paths
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = abs(hash("card_shop|%d|%d" % [player_seed, round_number]))
+	for index in range(shuffled_paths.size() - 1, 0, -1):
+		var swap_index: int = rng.randi_range(0, index)
+		if swap_index == index:
+			continue
+		var current_path: String = shuffled_paths[index]
+		shuffled_paths[index] = shuffled_paths[swap_index]
+		shuffled_paths[swap_index] = current_path
+	return shuffled_paths
 
 func _choose_background_shop_pick(player_state: MatchPlayerState, offer_paths: Array[String], round_number: int) -> String:
 	var best_path: String = ""
